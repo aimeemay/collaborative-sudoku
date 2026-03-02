@@ -4,10 +4,11 @@
  */
 
 import { AzureMember, ITokenProvider, ITokenResponse, IUser } from "@fluidframework/azure-client";
-import { ScopeType } from "@fluidframework/protocol-definitions";
 import axios from "axios";
 import { KJUR as jsrsasign } from "jsrsasign";
 import { v4 as uuid } from "uuid";
+
+type TokenScope = "doc:read" | "doc:write" | "summary:write";
 
 /**
  * Token Provider implementation for connecting to an Azure Function endpoint for
@@ -76,7 +77,7 @@ export class AzureFunctionTokenProvider implements ITokenProvider {
 export function generateToken(
 	tenantId: string,
 	key: string,
-	scopes: ScopeType[],
+	scopes: TokenScope[],
 	user: IUser,
 	documentId?: string,
 	lifetime: number = 60 * 60,

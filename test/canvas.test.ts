@@ -3,115 +3,41 @@
  * Licensed under the MIT License.
  */
 
-import { test, expect, Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { addSharedItem, waitForStarterApp } from "./test-utils";
 
-async function createShape(page: Page, shape: "circle" | "square" | "triangle" | "star") {
-await page.getByTestId("shape-menu-button").click({ force: true });
-await page.waitForTimeout(200); // Wait for menu to open
-await page.getByTestId(`shape-option-${shape}`).click();
-await page.waitForTimeout(300); // Wait for shape creation to complete
-}
+test.describe("List Operations", () => {
+	test.beforeEach(async ({ page }) => {
+		await waitForStarterApp(page);
+	});
 
-test.describe("Canvas Operations", () => {
-test.beforeEach(async ({ page }) => {
-await page.goto("/", { waitUntil: "domcontentloaded" });
-// Wait for app to be fully loaded
-await expect(page.locator("#canvas")).toBeVisible({ timeout: 10000 });
-});
+	test("should add multiple shared items", async ({ page }) => {
+		await addSharedItem(page, "Set milestones");
+		await addSharedItem(page, "Review pull requests");
+		await addSharedItem(page, "Ship release");
 
-test.describe("Shape Creation", () => {
-test("should create a circle", async ({ page }) => {
-await createShape(page, "circle");
-// Verify the shape exists by checking for canvas items
-await expect(page.locator("[data-item-id]")).toHaveCount(1);
-});
+		await expect(page.getByRole("checkbox")).toHaveCount(3);
+		await expect(page.getByText(/0\/3 done · 3 left/i)).toBeVisible();
+	});
 
-test("should create a square", async ({ page }) => {
-await createShape(page, "square");
-await expect(page.locator("[data-item-id]")).toHaveCount(1);
-});
+	test("should update progress as items are completed", async ({ page }) => {
+		await addSharedItem(page, "Task A");
+		await addSharedItem(page, "Task B");
 
-test("should create a triangle", async ({ page }) => {
-await createShape(page, "triangle");
-await expect(page.locator("[data-item-id]")).toHaveCount(1);
-});
+		const checkboxes = page.getByRole("checkbox");
+		await checkboxes.nth(0).check();
+		await expect(page.getByText(/1\/2 done · 1 left/i)).toBeVisible();
 
-test("should create a star", async ({ page }) => {
-await createShape(page, "star");
-await expect(page.locator("[data-item-id]")).toHaveCount(1);
-});
+		await checkboxes.nth(1).check();
+		await expect(page.getByText(/2\/2 done · 0 left/i)).toBeVisible();
+	});
 
-test("should create multiple shapes", async ({ page }) => {
-// Create multiple different shapes
-await createShape(page, "circle");
-await createShape(page, "square");
-await createShape(page, "triangle");
+	test("should strike through checked items", async ({ page }) => {
+		const itemText = "Document API changes";
+		await addSharedItem(page, itemText);
 
-// Verify all shapes exist
-await expect(page.locator("[data-item-id]")).toHaveCount(3);
-});
-});
-
-test.describe("Note Creation", () => {
-test("should create a note", async ({ page }) => {
-await page.getByRole("button", { name: /note/i }).click();
-await expect(page.locator("[data-item-id]")).toHaveCount(1);
-});
-
-test("should edit note text", async ({ page }) => {
-// Create a note
-await page.getByRole("button", { name: /note/i }).click();
-const note = page.locator("[data-item-id]").first();
-await expect(note).toBeVisible();
-
-// Click note and type
-await note.locator("textarea").click();
-await page.keyboard.type("Test note content");
-await expect(note.locator("textarea")).toHaveValue("Test note content");
-});
-
-test("should create multiple notes", async ({ page }) => {
-await page.getByRole("button", { name: /note/i }).click();
-await page.getByRole("button", { name: /note/i }).click();
-await expect(page.locator("[data-item-id]")).toHaveCount(2);
-});
-});
-
-test.describe("Table Creation", () => {
-test("should create a table", async ({ page }) => {
-await page.getByRole("button", { name: /table/i }).click();
-// Verify the table exists
-await expect(page.locator("[data-item-id]")).toHaveCount(1);
-});
-});
-
-test.describe("Selection and Manipulation", () => {
-test("should delete selected item", async ({ page }) => {
-// Create an item first
-await createShape(page, "circle");
-const shape = page.locator("[data-item-id]").first();
-await expect(shape).toBeVisible();
-
-// Click to select
-await shape.click();
-// Press Delete key
-await page.keyboard.press("Delete");
-// Verify item is gone
-await expect(page.locator("[data-item-id]")).toHaveCount(0);
-});
-
-test("should duplicate selected item", async ({ page }) => {
-// Create an item first
-await createShape(page, "circle");
-const shape = page.locator("[data-item-id]").first();
-await expect(shape).toBeVisible();
-
-// Click to select
-await shape.click();
-// Press Ctrl+D to duplicate
-await page.keyboard.press("Control+D");
-// Verify we now have 2 items
-await expect(page.locator("[data-item-id]")).toHaveCount(2);
-});
-});
+		const rowLabel = page.getByText(itemText).first();
+		await page.getByRole("checkbox").first().check();
+		await expect(rowLabel).toHaveClass(/line-through/);
+	});
 });

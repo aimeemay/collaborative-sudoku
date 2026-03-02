@@ -4,11 +4,14 @@
  */
 
 import { AzureMember, ITokenProvider, ITokenResponse, IUser } from "@fluidframework/azure-client";
-import { ScopeType } from "@fluidframework/protocol-definitions";
 import axios from "axios";
 import { KJUR as jsrsasign } from "jsrsasign";
 import { v4 as uuid } from "uuid";
 import { uniqueNamesGenerator, names } from "unique-names-generator";
+
+type TokenScope = "doc:read" | "doc:write" | "summary:write";
+
+const defaultTokenScopes: TokenScope[] = ["doc:read", "doc:write", "summary:write"];
 
 /**
  * Insecure user definition.
@@ -94,7 +97,7 @@ export class InsecureTokenProvider implements ITokenProvider {
 			jwt: generateToken(
 				tenantId,
 				this.tenantKey,
-				[ScopeType.DocRead, ScopeType.DocWrite, ScopeType.SummaryWrite],
+				defaultTokenScopes,
 				documentId,
 				this.user
 			),
@@ -110,7 +113,7 @@ export class InsecureTokenProvider implements ITokenProvider {
 			jwt: generateToken(
 				tenantId,
 				this.tenantKey,
-				[ScopeType.DocRead, ScopeType.DocWrite, ScopeType.SummaryWrite],
+				defaultTokenScopes,
 				documentId,
 				this.user
 			),
@@ -153,7 +156,7 @@ export const azureUser = {
 export function generateToken(
 	tenantId: string,
 	key: string,
-	scopes: ScopeType[],
+	scopes: TokenScope[],
 	documentId?: string,
 	user?: IInsecureUser,
 	lifetime: number = 60 * 60,
