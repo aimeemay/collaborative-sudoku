@@ -1,10 +1,21 @@
 import React from "react";
 import { useFluidRuntime } from "./react/contexts/FluidContext.js";
 import { useSharedTreeState } from "./react/hooks/useSharedTreeState.js";
-import { addItem, toggleItem, updateTitle } from "./infra/sharedTreeClient.js";
+import {
+	addItem,
+	getSemanticAuditEntries,
+	rollbackSemanticEdit,
+	toggleItem,
+	updateTitle,
+} from "./infra/sharedTreeClient.js";
 import { applySemanticSuggestion } from "./infra/llmClient.js";
 import { usePresenceUsers } from "./infra/presenceClient.js";
 import type { AppModel, Item } from "./schema/starterSchema.js";
+import {
+	createSemanticPreviewDiff,
+	SemanticAction,
+	SemanticSnapshot,
+} from "./infra/semanticActions.js";
 
 export function StarterApp() {
 	const { tree, llm, presence, me } = useFluidRuntime();
@@ -23,11 +34,34 @@ export function StarterApp() {
 
 	const [newItem, setNewItem] = React.useState("");
 	const [busy, setBusy] = React.useState(false);
+	const [pendingActions, setPendingActions] = React.useState<SemanticAction[] | null>(null);
+	const [aiMessage, setAiMessage] = React.useState<string | null>(null);
 
 	const users = usePresenceUsers(presence.users);
+	const semanticAuditEntries = React.useMemo(() => getSemanticAuditEntries(tree).slice(0, 5), [snapshot, tree]);
 	const completed = snapshot.items.filter((i: Item) => i.done).length;
 	const total = snapshot.items.length;
 	const remaining = total - completed;
+
+	const semanticBaseSnapshot: SemanticSnapshot = React.useMemo(
+		() => ({
+			title: snapshot.title,
+			items: snapshot.items.map((item) => ({
+				id: item.id,
+				text: item.text,
+				done: item.done,
+				author: item.author,
+			})),
+		}),
+		[snapshot]
+	);
+
+	const semanticPreviewDiff = React.useMemo(() => {
+		if (!pendingActions || pendingActions.length === 0) {
+			return null;
+		}
+		return createSemanticPreviewDiff(semanticBaseSnapshot, pendingActions);
+	}, [semanticBaseSnapshot, pendingActions]);
 
 	const handleAdd = (e: React.FormEvent) => {
 		e.preventDefault();
@@ -39,17 +73,44 @@ export function StarterApp() {
 
 	const handleAI = async () => {
 		setBusy(true);
+		setAiMessage(null);
 		try {
-			const suggestion = await llm.suggestEdit({
+			const actions = await llm.suggestEdit({
 				title: snapshot.title,
 				items: snapshot.items,
 			});
-			await applySemanticSuggestion(tree, suggestion);
+			if (actions.length === 0) {
+				setPendingActions(null);
+				setAiMessage("No changes suggested.");
+				return;
+			}
+			setPendingActions(actions);
+			setAiMessage(`Drafted ${actions.length} proposed change${actions.length === 1 ? "" : "s"}.`);
 		} catch (error) {
 			console.error("LLM suggestion failed", error);
+			setAiMessage("Could not generate AI changes.");
 		} finally {
 			setBusy(false);
 		}
+	};
+
+	const handleApplySuggestion = async () => {
+		if (!pendingActions || pendingActions.length === 0) {
+			return;
+		}
+		await applySemanticSuggestion(tree, pendingActions, { actor: me.name });
+		setPendingActions(null);
+		setAiMessage("Applied AI changes.");
+	};
+
+	const handleDiscardSuggestion = () => {
+		setPendingActions(null);
+		setAiMessage("Discarded AI changes.");
+	};
+
+	const handleRollback = (auditId: string) => {
+		const rolledBack = rollbackSemanticEdit(tree, auditId);
+		setAiMessage(rolledBack ? "Rolled back AI change." : "Could not roll back selected change.");
 	};
 
 	return (
@@ -115,6 +176,115 @@ export function StarterApp() {
 				</header>
 
 				<section className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-xl shadow-black/20 backdrop-blur">
+					<div className="mb-5 space-y-3">
+						{aiMessage && (
+							<div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
+								{aiMessage}
+							</div>
+						)}
+						{pendingActions && pendingActions.length > 0 && (
+							<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+								<p className="text-sm font-semibold text-white">Pending AI proposal</p>
+								{semanticPreviewDiff && (
+									<div className="mt-2 space-y-2 text-sm text-slate-200">
+										{semanticPreviewDiff.titleChanged && (
+											<div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+												<p className="text-xs uppercase tracking-wide text-slate-300">Title</p>
+												<p className="text-slate-300 line-through">{semanticPreviewDiff.before.title}</p>
+												<p className="text-emerald-300">{semanticPreviewDiff.after.title}</p>
+											</div>
+										)}
+
+										{semanticPreviewDiff.addedItems.length > 0 && (
+											<div>
+												<p className="text-xs uppercase tracking-wide text-slate-300">Added items</p>
+												<ul className="mt-1 list-disc space-y-1 pl-5">
+													{semanticPreviewDiff.addedItems.map((item) => (
+														<li key={item.id} className="text-emerald-300">{item.text}</li>
+													))}
+												</ul>
+											</div>
+										)}
+
+										{semanticPreviewDiff.changedItems.length > 0 && (
+											<div>
+												<p className="text-xs uppercase tracking-wide text-slate-300">Changed items</p>
+												<ul className="mt-1 list-disc space-y-1 pl-5">
+													{semanticPreviewDiff.changedItems.map((change) => (
+														<li key={change.id}>
+															<span className="text-slate-300 line-through">{change.before.text}</span>
+															<span className="mx-2 text-slate-400">→</span>
+															<span className="text-amber-300">{change.after.text}</span>
+															{change.before.done !== change.after.done && (
+																<span className="ml-2 text-xs text-cyan-300">
+																	({change.after.done ? "marked done" : "marked active"})
+																</span>
+															)}
+														</li>
+													))}
+												</ul>
+											</div>
+										)}
+
+										{semanticPreviewDiff.removedItems.length > 0 && (
+											<div>
+												<p className="text-xs uppercase tracking-wide text-slate-300">Removed items</p>
+												<ul className="mt-1 list-disc space-y-1 pl-5">
+													{semanticPreviewDiff.removedItems.map((item) => (
+														<li key={item.id} className="text-rose-300 line-through">{item.text}</li>
+													))}
+												</ul>
+											</div>
+										)}
+									</div>
+								)}
+								<div className="mt-3 flex flex-wrap gap-2">
+									<button
+										onClick={handleApplySuggestion}
+										className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 shadow-lg shadow-emerald-500/30 transition hover:bg-emerald-400"
+									>
+										Apply suggestion
+									</button>
+									<button
+										onClick={handleDiscardSuggestion}
+										className="rounded-xl border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
+									>
+										Discard
+									</button>
+								</div>
+							</div>
+						)}
+
+						{semanticAuditEntries.length > 0 && (
+							<div className="rounded-xl border border-white/10 bg-white/5 p-4">
+								<p className="text-sm font-semibold text-white">Recent AI changes</p>
+								<ul className="mt-2 space-y-2 text-sm text-slate-200">
+									{semanticAuditEntries.map((entry) => (
+										<li
+											key={entry.id}
+											className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+										>
+											<div>
+												<p className="text-white">
+													{new Date(entry.createdAt).toLocaleTimeString()} • {entry.actor ?? "Unknown"}
+												</p>
+												<p className="text-xs text-slate-300">
+													{entry.actions.length} action{entry.actions.length === 1 ? "" : "s"}
+												</p>
+											</div>
+											<button
+												onClick={() => handleRollback(entry.id)}
+												className="rounded-lg border border-rose-300/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20"
+											>
+												Rollback
+											</button>
+										</li>
+									))}
+								</ul>
+							</div>
+						)}
+					</div>
+
 					<form onSubmit={handleAdd} className="flex flex-col gap-3 sm:flex-row">
 						<input
 							className="flex-1 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-base text-white shadow-inner shadow-black/10 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-400/40"

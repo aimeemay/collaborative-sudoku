@@ -13,9 +13,21 @@ export class Item extends sf.object("Item", {
 
 export class Items extends sf.array("Items", Item) {}
 
+export class SemanticEditLogEntry extends sf.object("SemanticEditLogEntry", {
+	id: sf.string,
+	createdAt: sf.number,
+	actor: sf.optional(sf.string),
+	actionsJson: sf.string,
+	beforeSnapshotJson: sf.string,
+	afterSnapshotJson: sf.string,
+}) {}
+
+export class SemanticEditLog extends sf.array("SemanticEditLog", SemanticEditLogEntry) {}
+
 export class AppModel extends sf.object("AppModel", {
 	title: sf.string,
 	items: Items,
+	semanticEditLog: sf.optional(SemanticEditLog),
 }) {}
 
 export const starterTreeConfiguration = new TreeViewConfiguration({ schema: AppModel });
@@ -26,5 +38,6 @@ export function getDefaultStarterContent(): AppModel {
 	return new AppModel({
 		title: "Fluid Starter",
 		items: new Items([]),
+		semanticEditLog: new SemanticEditLog([]),
 	});
 }

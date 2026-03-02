@@ -1,5 +1,10 @@
 import { Item, StarterTreeView } from "../schema/starterSchema.js";
-import { replaceItems, updateTitle } from "./sharedTreeClient.js";
+import { applySemanticActionsWithAudit } from "./sharedTreeClient.js";
+import {
+	actionsFromLegacySuggestion,
+	parseSemanticActions,
+	SemanticAction,
+} from "./semanticActions.js";
 
 type SemanticSuggestion = {
 	title?: string;
@@ -12,13 +17,13 @@ type SuggestEditRequest = {
 };
 
 export interface LlmClient {
-	suggestEdit(input: SuggestEditRequest): Promise<SemanticSuggestion>;
+	suggestEdit(input: SuggestEditRequest): Promise<SemanticAction[]>;
 }
 
 class HttpLlmClient implements LlmClient {
 	constructor(private readonly endpoint: string) {}
 
-	async suggestEdit(input: SuggestEditRequest): Promise<SemanticSuggestion> {
+	async suggestEdit(input: SuggestEditRequest): Promise<SemanticAction[]> {
 		const response = await fetch(this.endpoint, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -37,21 +42,13 @@ class HttpLlmClient implements LlmClient {
 			throw new Error(`LLM endpoint returned ${response.status}`);
 		}
 
-		const data = (await response.json()) as SemanticSuggestion;
-		return {
-			title: data.title,
-			items: data.items?.map((item) => ({
-				id: item.id ?? crypto.randomUUID(),
-				text: item.text,
-				done: item.done ?? false,
-				author: item.author,
-			})),
-		};
+		const data = (await response.json()) as unknown;
+		return parseSemanticActions(data);
 	}
 }
 
 class MockLlmClient implements LlmClient {
-	async suggestEdit(input: SuggestEditRequest): Promise<SemanticSuggestion> {
+	async suggestEdit(input: SuggestEditRequest): Promise<SemanticAction[]> {
 		const trimmed = input.items.map((item) => item.text.trim());
 		const emptyCount = trimmed.filter((t) => t.length === 0).length;
 		const shouldTitle = input.title.trim().length === 0;
@@ -77,7 +74,7 @@ class MockLlmClient implements LlmClient {
 			];
 		}
 
-		return suggestion;
+		return actionsFromLegacySuggestion(suggestion);
 	}
 }
 
@@ -91,26 +88,12 @@ export function createLlmClient(): LlmClient {
 
 export async function applySemanticSuggestion(
 	tree: StarterTreeView,
-	suggestion: SemanticSuggestion
-): Promise<void> {
-	if (!suggestion.title && !suggestion.items) {
-		return;
+	actions: SemanticAction[],
+	options?: { actor?: string }
+): Promise<{ auditId?: string }> {
+	if (actions.length === 0) {
+		return {};
 	}
-
-	if (suggestion.title) {
-		updateTitle(tree, suggestion.title);
-	}
-
-	if (suggestion.items) {
-		const nextItems = suggestion.items.map(
-			(item) =>
-				new Item({
-					id: item.id ?? crypto.randomUUID(),
-					text: item.text,
-					done: item.done ?? false,
-					author: item.author,
-				})
-		);
-		replaceItems(tree, nextItems);
-	}
+	const result = applySemanticActionsWithAudit(tree, actions, options?.actor);
+	return { auditId: result?.auditId };
 }

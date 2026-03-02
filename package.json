@@ -22,6 +22,7 @@
 		"start:server": "azure-local-service",
 		"pretest": "playwright install --with-deps",
 		"test": "playwright test",
+		"test:smoke": "playwright test App.test.ts",
 		"test:unit": "vitest run",
 		"webpack": "vite build"
 	},

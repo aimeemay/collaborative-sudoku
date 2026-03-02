@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 import { addSharedItem, waitForStarterApp } from "./test-utils";
 
 test.describe("Smoke Tests", () => {
- 	test.beforeEach(async ({ page }) => {
+	test.beforeEach(async ({ page }) => {
 		await waitForStarterApp(page);
 	});
 
@@ -15,7 +15,9 @@ test.describe("Smoke Tests", () => {
 		await expect(page.getByPlaceholder("Shared list title")).toHaveValue(/.+/);
 		await expect(page.getByRole("button", { name: "Smart fill" })).toBeVisible();
 		await expect(page.getByText(/\d+ online/i)).toBeVisible();
-		await expect(page.getByText("No shared items yet. Add one above or ask AI to draft a list.")).toBeVisible();
+		await expect(
+			page.getByText("No shared items yet. Add one above or ask AI to draft a list.")
+		).toBeVisible();
 	});
 
 	test("should add and check off an item", async ({ page }) => {

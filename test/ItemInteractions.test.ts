@@ -44,12 +44,16 @@ test.describe("Item Interactions", () => {
 	});
 
 	test("should keep only one empty-state message", async ({ page }) => {
-		await expect(page.getByText("No shared items yet. Add one above or ask AI to draft a list.")).toHaveCount(1);
+		await expect(
+			page.getByText("No shared items yet. Add one above or ask AI to draft a list.")
+		).toHaveCount(1);
 	});
 
 	test("should hide empty-state once items are added", async ({ page }) => {
 		await addSharedItem(page, "Draft migration guide");
-		await expect(page.getByText("No shared items yet. Add one above or ask AI to draft a list.")).toHaveCount(0);
+		await expect(
+			page.getByText("No shared items yet. Add one above or ask AI to draft a list.")
+		).toHaveCount(0);
 	});
 
 	test("should preserve item order in UI", async ({ page }) => {
@@ -57,7 +61,9 @@ test.describe("Item Interactions", () => {
 		await addSharedItem(page, "Second item");
 		await addSharedItem(page, "Third item");
 
-		const labels = page.locator("section span.text-white, section span.text-slate-400.line-through");
+		const labels = page.locator(
+			"section span.text-white, section span.text-slate-400.line-through"
+		);
 		await expect(labels.nth(0)).toHaveText("First item");
 		await expect(labels.nth(1)).toHaveText("Second item");
 		await expect(labels.nth(2)).toHaveText("Third item");

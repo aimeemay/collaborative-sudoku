@@ -1,66 +1,60 @@
-# Fluid + React + Tailwind + Vite Starter Conversion Plan
+# Starter Status and Roadmap
 
-## Goals
+## Current State (March 2026)
 
-- Produce a minimal, opinionated starter that demonstrates SharedTree, Presence API, Semantic Editing (LLM-in-the-loop), and the repo’s React invalidation patterns.
-- Keep Vite + React + Tailwind + TypeScript as the default stack with tiny UI examples and clear extension points.
-- Make it easy for an LLM and humans to follow: small surface area, clear file boundaries, docstrings, and tests.
+The repo is already converted to a minimal Fluid + React starter:
 
-## Target End State
+- SharedTree checklist model (`title`, `items`) in [src/schema/starterSchema.ts](../src/schema/starterSchema.ts)
+- Transactional data helpers in [src/infra/sharedTreeClient.ts](../src/infra/sharedTreeClient.ts)
+- Presence clients in [src/infra/presenceClient.ts](../src/infra/presenceClient.ts)
+- Semantic suggestion client in [src/infra/llmClient.ts](../src/infra/llmClient.ts)
+- Single starter entry in [src/start/starterStart.tsx](../src/start/starterStart.tsx)
 
-- Simple data model in SharedTree: shared `title`, `items` list with `text`, `done`, and `author` fields.
-- Presence: join/leave, cursor/selection, simple avatar list.
-- Semantic editing: mock LLM client with `suggestEdit` that proposes edits to `items`; swap-in real endpoint via env.
-- React layer: `FluidProvider` + hooks (`useSharedTreeState`, `usePresenceState`, `useSemanticEdits`) with batched invalidation.
-- UI: one-page app with header, shared list, presence bar, and “Ask AI to tidy” button.
-- Tooling: Vite dev/build, Tailwind v4, Vitest unit test for SharedTree helpers, Playwright smoke test.
+## What This Means
 
-## Phased Work
+This document is no longer a "conversion plan". The conversion is complete.
+The focus is now **hardening for AI-assisted development and production-like collaboration workflows**.
 
-1. **Baseline & Cleanup**
-    - Keep Vite/TS configs; prune unused scripts/deps once new surface is live.
-    - Remove demo-specific assets/pages/tests after the starter path runs.
+## Hardening Roadmap
 
-2. **Data & Container Schema**
-    - Define `containerSchema` with a single `SharedTree` (`appTree`).
-    - Add `starterSchema.ts` (title + items array) and `appTreeConfiguration` setup helper.
-    - Provide `sharedTreeClient.ts` with init/attach + typed CRUD helpers.
+### Phase 1 — Documentation Alignment
 
-3. **Presence Layer**
-    - Add `presenceClient.ts` wrapping `@fluidframework/presence` with workspace, `participants`, `updatePresence`, `dispose`.
-    - React hook `usePresenceState` that subscribes and batches updates.
+- Keep docs consistent with the current starter implementation.
+- Remove references to non-existent paths/components.
+- Ensure one canonical architecture narrative.
 
-4. **Semantic Editing Layer**
-    - Add `llmClient.ts` with mock implementation + env-driven adapter hook point.
-    - Provide `applySemanticEdit.ts` helper to map LLM suggestions onto SharedTree mutations.
+### Phase 2 — AI Mutation Contract
 
-5. **React Scaffolding & UI**
-    - Add `contexts/FluidContext.tsx` to expose container, tree, presence, undo.
-    - Hooks: `useSharedTreeState(selector)`, `useSharedTreeActions`, `usePresenceState`, `useSemanticEditing`.
-    - Components: `App.tsx` (layout), `Header`, `PresenceBar`, `ItemList`, `LLMCommandBar`.
-    - Keep Tailwind utilities minimal (`index.css` reset + a few utility classes).
+- Introduce schema-validated semantic actions.
+- Keep model output constrained to known operations.
+- Reject malformed or out-of-scope actions.
 
-6. **Start Entry Points**
-    - Simplify `index.tsx` to load a single `startStarter()` entry.
-    - `start/starterStart.ts`: choose local or Azure client via env, call `bootstrapStarterApp()`.
-    - Keep `localStart` path; Azure path reduced to minimal auth placeholder (AAD/Relay env stubs).
+### Phase 3 — Staged Semantic Apply
 
-7. **Testing & Scripts**
-    - Vitest: unit test for `sharedTreeClient` CRUD + semantic edit application.
-    - Playwright: smoke test loads page, shows shared title and one presence user.
-    - npm scripts: `dev`, `dev:local`, `dev:azure`, `test`, `test:e2e`, `lint`, `build`.
+- Add suggestion staging, diff preview, and accept/reject UX.
+- Prevent immediate, implicit semantic write-through.
 
-8. **Docs**
-    - Update `README.md` with quickstart, architecture, how to swap LLM backend, how to add new fields.
-    - Add `docs/SEMANTIC_EDITING_STARTER.md` for the LLM contract + examples.
+### Phase 4 — Recovery and Auditability
 
-## Execution Order (short-term)
+- Add semantic edit history metadata.
+- Add rollback/restore checkpoints for accepted edits.
 
-- Implement new starter path alongside existing code (non-destructive), prove it runs locally.
-- Wire `index.tsx` to the starter path.
-- Trim obvious unused demo pieces after starter is green; then prune dependencies.
+### Phase 5 — Test Confidence
 
-## Open Decisions (to revisit after initial cut)
+- Add unit tests for mutation helpers and semantic mapping.
+- Add real two-page collaboration tests (same container id sync).
+- Keep Playwright smoke tests aligned with current UI.
 
-- Whether to keep Fluent UI or move to bare Tailwind components (initial cut will drop Fluent for simplicity).
-- How much of Azure auth to retain—initial cut keeps local + stubbed Azure path with env placeholders.
+### Phase 6 — CI Gates and Cleanup
+
+- Enforce compile/lint/unit/e2e smoke in CI.
+- Prune stale placeholder tests/docs and legacy artifacts.
+
+## Definition of Done
+
+The starter is considered hardened when:
+
+- Semantic edits are validated, reviewable, and reversible.
+- Collaboration behavior is verified by multi-client tests.
+- Docs and implementation are in sync.
+- CI pass is a reliable quality signal for assistant-generated changes.

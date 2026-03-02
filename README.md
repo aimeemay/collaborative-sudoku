@@ -1,6 +1,6 @@
 # Fluid + React + Tailwind Starter
 
-Purpose-built as a lean starting point for Fluid apps. It ships a minimal SharedTree data model, Presence API wiring, and a mock semantic-edit (LLM) hook—ready for a coding agent to extend.
+Purpose-built as a lean starting point for Fluid apps. It ships a minimal SharedTree data model, Presence API wiring, and a constrained semantic-suggestion (LLM) hook—ready for a coding agent to extend.
 
 Legacy Fluent UI canvas demo code and dependencies have been removed to keep the starter minimal.
 
@@ -10,6 +10,12 @@ Legacy Fluent UI canvas demo code and dependencies have been removed to keep the
 - Start local relay: `npm run start:server`.
 - Run dev server: `npm run dev` (opens <http://localhost:8080> per `vite.config.mts`).
 - Open a second tab/window to see live collaboration. Container ID is persisted in the URL.
+
+If `npm run dev` fails with `Port 8080 is already in use`, either stop the process using that port or run `npm run dev -- --port 8081`.
+
+## Forking with AI
+
+If you plan to build your app primarily with AI assistants, follow the engineer workflow in [docs/FORKING_WITH_AI.md](docs/FORKING_WITH_AI.md).
 
 ## What’s Included
 
@@ -24,7 +30,7 @@ Legacy Fluent UI canvas demo code and dependencies have been removed to keep the
 - Data model: `src/schema/starterSchema.ts` — add/change fields on `AppModel`, `Item`.
 - Data helpers: `src/infra/sharedTreeClient.ts` — CRUD, snapshot, and mutations (uses `Tree.runTransaction`).
 - Presence: `src/infra/presenceClient.ts` — users + cursor managers; extend for selections/other signals.
-- Semantic: `src/infra/llmClient.ts` — mock `suggestEdit`; replace with real API calls.
+- Semantic: `src/infra/llmClient.ts` — mock or HTTP-backed `suggestEdit`; replace with your real API calls.
 - React runtime: `src/react/contexts/FluidContext.tsx` — exposes container/tree/presence/llm/me.
 - UI: `src/App.tsx` — main starter experience; add routes/components here.
 - Entry: `src/start/starterStart.tsx` + `src/index.tsx` — bootstraps client, presence, and renders app.
@@ -34,7 +40,7 @@ Legacy Fluent UI canvas demo code and dependencies have been removed to keep the
 
 - Container schema: `src/schema/containerSchema.ts` defines `appData: SharedTree`.
 - Create/get container: `loadStarterContainer` in `src/infra/sharedTreeClient.ts` (initializes default content when empty).
-- React subscription: `useSharedTreeState` in `src/react/hooks/useSharedTreeState.ts` (listens to commitApplied).
+- React subscription: `useSharedTreeState` in `src/react/hooks/useSharedTreeState.ts` (listens to `nodeChanged` / `treeChanged`).
 - Presence workspace: `createPresenceClients` sets up `users` + `cursor` managers on workspace `workspace:starter`.
 - User identity: generated locally via `unique-names-generator`; replace with auth if needed.
 
@@ -67,10 +73,9 @@ Legacy Fluent UI canvas demo code and dependencies have been removed to keep the
 
 - **Local mode**: No authentication; users are generated with `unique-names-generator` in `start/starterStart.tsx`.
 - **Azure mode (scaffolded)**:
-    - Uses MSAL in `src/start/azureStart.ts` to sign in and set active account.
-    - Token acquisition for Graph/profile pictures is in `src/infra/auth.ts` and `src/utils/graphService.ts` (can be disabled if not needed).
-    - Fluid client uses `getClientProps` (`src/infra/azure/azureClientProps.ts`) with `AzureFunctionTokenProvider` expecting `VITE_AZURE_FUNCTION_TOKEN_PROVIDER_URL`.
-    - User info passed into Fluid presence comes from MSAL account (id/name/photo when available).
+	- Uses the same starter entry (`src/start/starterStart.tsx`) with remote connection config selected by env.
+	- Fluid client uses `getClientProps` (`src/infra/azure/azureClientProps.ts`) with `AzureFunctionTokenProvider` expecting `VITE_AZURE_FUNCTION_TOKEN_PROVIDER_URL`.
+	- User identity is currently generated locally; replace with your auth identity source when needed.
 - To enable: set `VITE_FLUID_CLIENT=azure`, provide the Azure env vars below, and ensure your token provider function returns valid Fluid tokens.
 
 ### .env Setup
@@ -108,7 +113,7 @@ Notes:
 
 ```ts
 import { AzureFunction, Context, HttpRequest } from "@azure/functions";
-import { generateToken, ScopeType } from "@fluidframework/server-libraries";
+import { generateToken } from "@fluidframework/server-libraries";
 
 const tenantId = process.env.AZURE_TENANT_ID!;
 const tenantKey = process.env.AZURE_TENANT_KEY!; // from the Fluid Relay resource
@@ -121,17 +126,15 @@ const httpTrigger: AzureFunction = async (context: Context, req: HttpRequest) =>
 		userName = "anonymous",
 		additionalDetails,
 	} = req.query;
-	const jwt = generateToken(
-		queryTenant ?? tenantId,
-		tenantKey,
-		[ScopeType.DocRead, ScopeType.DocWrite, ScopeType.SummaryWrite],
-		documentId,
-		{
-			id: userId,
-			name: userName,
-			additionalDetails,
-		}
-	);
+	const jwt = generateToken(queryTenant ?? tenantId, tenantKey, [
+		"doc:read",
+		"doc:write",
+		"summary:write",
+	], documentId, {
+		id: userId,
+		name: userName,
+		additionalDetails,
+	});
 	context.res = { status: 200, body: jwt };
 };
 
