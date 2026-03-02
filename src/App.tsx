@@ -38,7 +38,10 @@ export function StarterApp() {
 	const [aiMessage, setAiMessage] = React.useState<string | null>(null);
 
 	const users = usePresenceUsers(presence.users);
-	const semanticAuditEntries = React.useMemo(() => getSemanticAuditEntries(tree).slice(0, 5), [snapshot, tree]);
+	const semanticAuditEntries = React.useMemo(
+		() => getSemanticAuditEntries(tree).slice(0, 5),
+		[snapshot, tree]
+	);
 	const completed = snapshot.items.filter((i: Item) => i.done).length;
 	const total = snapshot.items.length;
 	const remaining = total - completed;
@@ -85,7 +88,9 @@ export function StarterApp() {
 				return;
 			}
 			setPendingActions(actions);
-			setAiMessage(`Drafted ${actions.length} proposed change${actions.length === 1 ? "" : "s"}.`);
+			setAiMessage(
+				`Drafted ${actions.length} proposed change${actions.length === 1 ? "" : "s"}.`
+			);
 		} catch (error) {
 			console.error("LLM suggestion failed", error);
 			setAiMessage("Could not generate AI changes.");
@@ -110,7 +115,9 @@ export function StarterApp() {
 
 	const handleRollback = (auditId: string) => {
 		const rolledBack = rollbackSemanticEdit(tree, auditId);
-		setAiMessage(rolledBack ? "Rolled back AI change." : "Could not roll back selected change.");
+		setAiMessage(
+			rolledBack ? "Rolled back AI change." : "Could not roll back selected change."
+		);
 	};
 
 	return (
@@ -184,23 +191,38 @@ export function StarterApp() {
 						)}
 						{pendingActions && pendingActions.length > 0 && (
 							<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-								<p className="text-sm font-semibold text-white">Pending AI proposal</p>
+								<p className="text-sm font-semibold text-white">
+									Pending AI proposal
+								</p>
 								{semanticPreviewDiff && (
 									<div className="mt-2 space-y-2 text-sm text-slate-200">
 										{semanticPreviewDiff.titleChanged && (
 											<div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-												<p className="text-xs uppercase tracking-wide text-slate-300">Title</p>
-												<p className="text-slate-300 line-through">{semanticPreviewDiff.before.title}</p>
-												<p className="text-emerald-300">{semanticPreviewDiff.after.title}</p>
+												<p className="text-xs uppercase tracking-wide text-slate-300">
+													Title
+												</p>
+												<p className="text-slate-300 line-through">
+													{semanticPreviewDiff.before.title}
+												</p>
+												<p className="text-emerald-300">
+													{semanticPreviewDiff.after.title}
+												</p>
 											</div>
 										)}
 
 										{semanticPreviewDiff.addedItems.length > 0 && (
 											<div>
-												<p className="text-xs uppercase tracking-wide text-slate-300">Added items</p>
+												<p className="text-xs uppercase tracking-wide text-slate-300">
+													Added items
+												</p>
 												<ul className="mt-1 list-disc space-y-1 pl-5">
 													{semanticPreviewDiff.addedItems.map((item) => (
-														<li key={item.id} className="text-emerald-300">{item.text}</li>
+														<li
+															key={item.id}
+															className="text-emerald-300"
+														>
+															{item.text}
+														</li>
 													))}
 												</ul>
 											</div>
@@ -208,31 +230,55 @@ export function StarterApp() {
 
 										{semanticPreviewDiff.changedItems.length > 0 && (
 											<div>
-												<p className="text-xs uppercase tracking-wide text-slate-300">Changed items</p>
+												<p className="text-xs uppercase tracking-wide text-slate-300">
+													Changed items
+												</p>
 												<ul className="mt-1 list-disc space-y-1 pl-5">
-													{semanticPreviewDiff.changedItems.map((change) => (
-														<li key={change.id}>
-															<span className="text-slate-300 line-through">{change.before.text}</span>
-															<span className="mx-2 text-slate-400">→</span>
-															<span className="text-amber-300">{change.after.text}</span>
-															{change.before.done !== change.after.done && (
-																<span className="ml-2 text-xs text-cyan-300">
-																	({change.after.done ? "marked done" : "marked active"})
+													{semanticPreviewDiff.changedItems.map(
+														(change) => (
+															<li key={change.id}>
+																<span className="text-slate-300 line-through">
+																	{change.before.text}
 																</span>
-															)}
-														</li>
-													))}
+																<span className="mx-2 text-slate-400">
+																	→
+																</span>
+																<span className="text-amber-300">
+																	{change.after.text}
+																</span>
+																{change.before.done !==
+																	change.after.done && (
+																	<span className="ml-2 text-xs text-cyan-300">
+																		(
+																		{change.after.done
+																			? "marked done"
+																			: "marked active"}
+																		)
+																	</span>
+																)}
+															</li>
+														)
+													)}
 												</ul>
 											</div>
 										)}
 
 										{semanticPreviewDiff.removedItems.length > 0 && (
 											<div>
-												<p className="text-xs uppercase tracking-wide text-slate-300">Removed items</p>
+												<p className="text-xs uppercase tracking-wide text-slate-300">
+													Removed items
+												</p>
 												<ul className="mt-1 list-disc space-y-1 pl-5">
-													{semanticPreviewDiff.removedItems.map((item) => (
-														<li key={item.id} className="text-rose-300 line-through">{item.text}</li>
-													))}
+													{semanticPreviewDiff.removedItems.map(
+														(item) => (
+															<li
+																key={item.id}
+																className="text-rose-300 line-through"
+															>
+																{item.text}
+															</li>
+														)
+													)}
 												</ul>
 											</div>
 										)}
@@ -257,7 +303,9 @@ export function StarterApp() {
 
 						{semanticAuditEntries.length > 0 && (
 							<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-								<p className="text-sm font-semibold text-white">Recent AI changes</p>
+								<p className="text-sm font-semibold text-white">
+									Recent AI changes
+								</p>
 								<ul className="mt-2 space-y-2 text-sm text-slate-200">
 									{semanticAuditEntries.map((entry) => (
 										<li
@@ -266,10 +314,12 @@ export function StarterApp() {
 										>
 											<div>
 												<p className="text-white">
-													{new Date(entry.createdAt).toLocaleTimeString()} • {entry.actor ?? "Unknown"}
+													{new Date(entry.createdAt).toLocaleTimeString()}{" "}
+													• {entry.actor ?? "Unknown"}
 												</p>
 												<p className="text-xs text-slate-300">
-													{entry.actions.length} action{entry.actions.length === 1 ? "" : "s"}
+													{entry.actions.length} action
+													{entry.actions.length === 1 ? "" : "s"}
 												</p>
 											</div>
 											<button

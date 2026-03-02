@@ -17,10 +17,8 @@ There is **no Tree-Agent runtime** or schema-exposed method execution path in th
 
 ```json
 {
-  "title": "Shared Checklist",
-  "items": [
-    { "id": "...", "text": "Task", "done": false, "author": "user" }
-  ]
+	"title": "Shared Checklist",
+	"items": [{ "id": "...", "text": "Task", "done": false, "author": "user" }]
 }
 ```
 
@@ -28,10 +26,8 @@ There is **no Tree-Agent runtime** or schema-exposed method execution path in th
 
 ```json
 {
-  "title": "Optional updated title",
-  "items": [
-    { "id": "optional", "text": "Task", "done": false, "author": "AI" }
-  ]
+	"title": "Optional updated title",
+	"items": [{ "id": "optional", "text": "Task", "done": false, "author": "AI" }]
 }
 ```
 

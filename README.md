@@ -73,9 +73,9 @@ If you plan to build your app primarily with AI assistants, follow the engineer 
 
 - **Local mode**: No authentication; users are generated with `unique-names-generator` in `start/starterStart.tsx`.
 - **Azure mode (scaffolded)**:
-	- Uses the same starter entry (`src/start/starterStart.tsx`) with remote connection config selected by env.
-	- Fluid client uses `getClientProps` (`src/infra/azure/azureClientProps.ts`) with `AzureFunctionTokenProvider` expecting `VITE_AZURE_FUNCTION_TOKEN_PROVIDER_URL`.
-	- User identity is currently generated locally; replace with your auth identity source when needed.
+    - Uses the same starter entry (`src/start/starterStart.tsx`) with remote connection config selected by env.
+    - Fluid client uses `getClientProps` (`src/infra/azure/azureClientProps.ts`) with `AzureFunctionTokenProvider` expecting `VITE_AZURE_FUNCTION_TOKEN_PROVIDER_URL`.
+    - User identity is currently generated locally; replace with your auth identity source when needed.
 - To enable: set `VITE_FLUID_CLIENT=azure`, provide the Azure env vars below, and ensure your token provider function returns valid Fluid tokens.
 
 ### .env Setup
@@ -126,15 +126,17 @@ const httpTrigger: AzureFunction = async (context: Context, req: HttpRequest) =>
 		userName = "anonymous",
 		additionalDetails,
 	} = req.query;
-	const jwt = generateToken(queryTenant ?? tenantId, tenantKey, [
-		"doc:read",
-		"doc:write",
-		"summary:write",
-	], documentId, {
-		id: userId,
-		name: userName,
-		additionalDetails,
-	});
+	const jwt = generateToken(
+		queryTenant ?? tenantId,
+		tenantKey,
+		["doc:read", "doc:write", "summary:write"],
+		documentId,
+		{
+			id: userId,
+			name: userName,
+			additionalDetails,
+		}
+	);
 	context.res = { status: 200, body: jwt };
 };
 

@@ -95,7 +95,9 @@ function parseAction(value: unknown): SemanticAction | undefined {
 			if (!Array.isArray(value.items)) {
 				return undefined;
 			}
-			const items = value.items.map(parseItem).filter((item): item is SemanticItemInput => !!item);
+			const items = value.items
+				.map(parseItem)
+				.filter((item): item is SemanticItemInput => !!item);
 			if (items.length !== value.items.length) {
 				return undefined;
 			}
@@ -119,7 +121,9 @@ function parseAction(value: unknown): SemanticAction | undefined {
 	}
 }
 
-export function actionsFromLegacySuggestion(suggestion: LegacySemanticSuggestion): SemanticAction[] {
+export function actionsFromLegacySuggestion(
+	suggestion: LegacySemanticSuggestion
+): SemanticAction[] {
 	const actions: SemanticAction[] = [];
 
 	if (typeof suggestion.title === "string") {

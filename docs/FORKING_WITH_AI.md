@@ -6,30 +6,31 @@ This guide helps you fork this starter and build your own Fluid + React app whil
 
 1. Fork and clone.
 2. Install dependencies:
-   - `npm install`
+    - `npm install`
 3. Copy env defaults:
-   - Copy `.env.defaults` to `.env` (local mode is the default).
+    - Copy `.env.defaults` to `.env` (local mode is the default).
 4. Start local Fluid service in terminal A:
-   - `npm run start:server`
+    - `npm run start:server`
 5. Start frontend in terminal B:
-   - `npm run dev`
+    - `npm run dev`
 6. Open `http://localhost:8080` in two tabs.
 
 If `npm run dev` fails with "Port 8080 is already in use", free that port or run with a different one:
+
 - `npm run dev -- --port 8081`
 
 ## 2) Mental Model for AI-Assisted Changes
 
 - Shared persistent data lives in SharedTree schema:
-  - [src/schema/starterSchema.ts](../src/schema/starterSchema.ts)
+    - [src/schema/starterSchema.ts](../src/schema/starterSchema.ts)
 - Data mutations go through transaction helpers:
-  - [src/infra/sharedTreeClient.ts](../src/infra/sharedTreeClient.ts)
+    - [src/infra/sharedTreeClient.ts](../src/infra/sharedTreeClient.ts)
 - Presence is ephemeral and managed separately:
-  - [src/infra/presenceClient.ts](../src/infra/presenceClient.ts)
+    - [src/infra/presenceClient.ts](../src/infra/presenceClient.ts)
 - Semantic edit flow is action-based + staged approval:
-  - [src/infra/semanticActions.ts](../src/infra/semanticActions.ts)
-  - [src/infra/llmClient.ts](../src/infra/llmClient.ts)
-  - [src/App.tsx](../src/App.tsx)
+    - [src/infra/semanticActions.ts](../src/infra/semanticActions.ts)
+    - [src/infra/llmClient.ts](../src/infra/llmClient.ts)
+    - [src/App.tsx](../src/App.tsx)
 
 ## 3) Standard AI Workflow (Recommended)
 
@@ -78,4 +79,3 @@ Start local-first. Switch only after your app model stabilizes:
 - Set `VITE_FLUID_CLIENT=azure`
 - Configure Azure env vars in `.env`
 - Ensure token provider endpoint returns valid Fluid JWTs
-
