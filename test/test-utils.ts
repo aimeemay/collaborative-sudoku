@@ -7,18 +7,39 @@ import { expect, Page } from "@playwright/test";
 
 export async function waitForStarterApp(page: Page): Promise<void> {
 	await page.goto("/", { waitUntil: "domcontentloaded" });
-	await expect(page.getByPlaceholder("Shared list title")).toBeVisible({ timeout: 15000 });
-	await expect(page.getByPlaceholder("Add a shared item")).toBeVisible();
-	await expect(page.getByRole("button", { name: "Smart fill" })).toBeVisible();
+
+	// Backstage: create a room if on lobby
+	const createRoomButton = page.getByRole("button", { name: "Create room" });
+	if (await createRoomButton.isVisible()) {
+		await createRoomButton.click();
+	}
+
+	// Name picker: submit default name to join
+	const joinButton = page.getByRole("button", { name: /^Join →$/ });
+	if (await joinButton.isVisible({ timeout: 8000 }).catch(() => false)) {
+		await joinButton.click();
+	}
+
+	await expect(page.getByRole("heading", { name: "Collaborative Sudoku" })).toBeVisible({
+		timeout: 15000,
+	});
+	await expect(page.getByRole("button", { name: "Submit move" })).toBeVisible();
 }
 
-export async function addSharedItem(page: Page, text: string): Promise<void> {
-	await page.getByPlaceholder("Add a shared item").fill(text);
-	await page.getByRole("button", { name: "Add" }).click();
-	await expect(page.getByText(text)).toBeVisible();
+export async function addSharedItem(page: Page, _text: string): Promise<void> {
+	await page.getByRole("button", { name: "Submit move" }).click();
 }
 
 export async function openSameSessionInNewPage(page: Page, otherPage: Page): Promise<void> {
 	await otherPage.goto(page.url(), { waitUntil: "domcontentloaded" });
-	await expect(otherPage.getByPlaceholder("Shared list title")).toBeVisible({ timeout: 15000 });
+
+	// Name picker on the second page
+	const joinButton = otherPage.getByRole("button", { name: /^Join →$/ });
+	if (await joinButton.isVisible({ timeout: 8000 }).catch(() => false)) {
+		await joinButton.click();
+	}
+
+	await expect(otherPage.getByRole("heading", { name: "Collaborative Sudoku" })).toBeVisible({
+		timeout: 15000,
+	});
 }

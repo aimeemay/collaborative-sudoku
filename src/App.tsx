@@ -2,393 +2,458 @@ import React from "react";
 import { useFluidRuntime } from "./react/contexts/FluidContext.js";
 import { useSharedTreeState } from "./react/hooks/useSharedTreeState.js";
 import {
-	addItem,
-	getSemanticAuditEntries,
-	rollbackSemanticEdit,
-	toggleItem,
-	updateTitle,
+	getSudokuSnapshot,
+	kickSudokuPlayer,
+	registerSudokuPlayer,
+	submitSudokuMoveAndPassTurn,
+	passSudokuTurn,
 } from "./infra/sharedTreeClient.js";
-import { applySemanticSuggestion } from "./infra/llmClient.js";
 import { usePresenceUsers } from "./infra/presenceClient.js";
-import type { AppModel, Item } from "./schema/starterSchema.js";
-import {
-	createSemanticPreviewDiff,
-	SemanticAction,
-	SemanticSnapshot,
-} from "./infra/semanticActions.js";
+import type { AppModel } from "./schema/starterSchema.js";
 
-export function StarterApp() {
-	const { tree, llm, presence, me } = useFluidRuntime();
-	const root = tree.root as AppModel;
-	const snapshot = useSharedTreeState(
-		root,
-		React.useCallback(
-			(target: AppModel) => ({
-				title: target.title,
-				items: [...target.items],
-			}),
-			[]
-		),
-		"treeChanged"
-	);
+// ─── Palette ───────────────────────────────────────────────────────────────
 
-	const [newItem, setNewItem] = React.useState("");
-	const [busy, setBusy] = React.useState(false);
-	const [pendingActions, setPendingActions] = React.useState<SemanticAction[] | null>(null);
-	const [aiMessage, setAiMessage] = React.useState<string | null>(null);
+const P = {
+	bg:           "#f8f5f0",
+	card:         "#ffffff",
+	subtle:       "#f3efe8",
+	border:       "#e5ddd4",
+	borderMid:    "#cfc4b8",
+	text:         "#1a1510",
+	text2:        "#706055",
+	text3:        "#a89888",
+	accent:       "#526d8a",
+	accentHover:  "#3e5670",
+	accentLight:  "#ecf1f7",
+	accentBorder: "#baccde",
+} as const;
 
-	const users = usePresenceUsers(presence.users);
-	const semanticAuditEntries = React.useMemo(
-		() => getSemanticAuditEntries(tree).slice(0, 5),
-		[snapshot, tree]
-	);
-	const completed = snapshot.items.filter((i: Item) => i.done).length;
-	const total = snapshot.items.length;
-	const remaining = total - completed;
+const PCOLORS = ["#526d8a", "#7a608a", "#4a7a5a", "#8a7050", "#8a4f50", "#4a7a8a"];
+const pc = (i: number) => PCOLORS[i % PCOLORS.length];
 
-	const semanticBaseSnapshot: SemanticSnapshot = React.useMemo(
-		() => ({
-			title: snapshot.title,
-			items: snapshot.items.map((item) => ({
-				id: item.id,
-				text: item.text,
-				done: item.done,
-				author: item.author,
-			})),
-		}),
-		[snapshot]
-	);
+// ─── Name Picker ───────────────────────────────────────────────────────────
 
-	const semanticPreviewDiff = React.useMemo(() => {
-		if (!pendingActions || pendingActions.length === 0) {
-			return null;
-		}
-		return createSemanticPreviewDiff(semanticBaseSnapshot, pendingActions);
-	}, [semanticBaseSnapshot, pendingActions]);
-
-	const handleAdd = (e: React.FormEvent) => {
-		e.preventDefault();
-		const text = newItem.trim();
-		if (!text) return;
-		addItem(tree, text, me.name);
-		setNewItem("");
-	};
-
-	const handleAI = async () => {
-		setBusy(true);
-		setAiMessage(null);
-		try {
-			const actions = await llm.suggestEdit({
-				title: snapshot.title,
-				items: snapshot.items,
-			});
-			if (actions.length === 0) {
-				setPendingActions(null);
-				setAiMessage("No changes suggested.");
-				return;
-			}
-			setPendingActions(actions);
-			setAiMessage(
-				`Drafted ${actions.length} proposed change${actions.length === 1 ? "" : "s"}.`
-			);
-		} catch (error) {
-			console.error("LLM suggestion failed", error);
-			setAiMessage("Could not generate AI changes.");
-		} finally {
-			setBusy(false);
-		}
-	};
-
-	const handleApplySuggestion = async () => {
-		if (!pendingActions || pendingActions.length === 0) {
-			return;
-		}
-		await applySemanticSuggestion(tree, pendingActions, { actor: me.name });
-		setPendingActions(null);
-		setAiMessage("Applied AI changes.");
-	};
-
-	const handleDiscardSuggestion = () => {
-		setPendingActions(null);
-		setAiMessage("Discarded AI changes.");
-	};
-
-	const handleRollback = (auditId: string) => {
-		const rolledBack = rollbackSemanticEdit(tree, auditId);
-		setAiMessage(
-			rolledBack ? "Rolled back AI change." : "Could not roll back selected change."
-		);
-	};
+function NamePickerOverlay({
+	defaultName,
+	onJoin,
+}: {
+	defaultName: string;
+	onJoin: (name: string) => void;
+}) {
+	const [name, setName] = React.useState(defaultName);
 
 	return (
-		<div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-slate-50">
-			<div className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-12">
-				<header className="flex flex-col gap-4 rounded-2xl border border-white/10 bg-white/5 p-6 shadow-xl shadow-black/20 backdrop-blur">
-					<div className="flex flex-wrap items-center gap-3">
-						<div className="flex-1 min-w-[220px]">
-							<input
-								className="w-full rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-lg font-semibold text-slate-50 shadow-inner shadow-black/10 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-500/40"
-								value={snapshot.title}
-								onChange={(e) => updateTitle(tree, e.target.value)}
-								placeholder="Shared list title"
-							/>
-						</div>
-						<button
-							onClick={handleAI}
-							disabled={busy}
-							className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-4 py-3 text-sm font-semibold text-slate-900 shadow-lg shadow-cyan-500/30 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:bg-cyan-700 disabled:text-slate-200"
-						>
-							{busy ? "Drafting..." : "Smart fill"}
-						</button>
-						<div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-2 text-xs text-slate-200">
-							<span className="h-2 w-2 rounded-full bg-emerald-400" />
-							{users.length} online
-						</div>
-					</div>
-					<div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-3">
-						<div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-							<p className="text-xs uppercase tracking-wide text-slate-300">Owner</p>
-							<p className="text-sm font-semibold text-white">{me.name}</p>
-						</div>
-						<div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-							<p className="text-xs uppercase tracking-wide text-slate-300">
-								Progress
-							</p>
-							<p className="text-sm font-semibold text-white">
-								{completed}/{total} done · {remaining} left
-							</p>
-						</div>
-						<div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-							<p className="text-xs uppercase tracking-wide text-slate-300">
-								Presence
-							</p>
-							<div className="flex flex-wrap items-center gap-2">
-								{users.map((user) => (
-									<span
-										key={user.value.id}
-										className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white shadow-sm shadow-black/20"
-									>
-										<span className="flex h-7 w-7 items-center justify-center rounded-full bg-cyan-400/90 text-[10px] font-semibold text-slate-900">
-											{(user.value.name ?? "?").slice(0, 2).toUpperCase()}
-										</span>
-										{user.value.name}
-									</span>
-								))}
-								{users.length === 0 && (
-									<span className="text-slate-300">No one online yet</span>
-								)}
-							</div>
-						</div>
-					</div>
-				</header>
-
-				<section className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-xl shadow-black/20 backdrop-blur">
-					<div className="mb-5 space-y-3">
-						{aiMessage && (
-							<div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-100">
-								{aiMessage}
-							</div>
-						)}
-						{pendingActions && pendingActions.length > 0 && (
-							<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-								<p className="text-sm font-semibold text-white">
-									Pending AI proposal
-								</p>
-								{semanticPreviewDiff && (
-									<div className="mt-2 space-y-2 text-sm text-slate-200">
-										{semanticPreviewDiff.titleChanged && (
-											<div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-												<p className="text-xs uppercase tracking-wide text-slate-300">
-													Title
-												</p>
-												<p className="text-slate-300 line-through">
-													{semanticPreviewDiff.before.title}
-												</p>
-												<p className="text-emerald-300">
-													{semanticPreviewDiff.after.title}
-												</p>
-											</div>
-										)}
-
-										{semanticPreviewDiff.addedItems.length > 0 && (
-											<div>
-												<p className="text-xs uppercase tracking-wide text-slate-300">
-													Added items
-												</p>
-												<ul className="mt-1 list-disc space-y-1 pl-5">
-													{semanticPreviewDiff.addedItems.map((item) => (
-														<li
-															key={item.id}
-															className="text-emerald-300"
-														>
-															{item.text}
-														</li>
-													))}
-												</ul>
-											</div>
-										)}
-
-										{semanticPreviewDiff.changedItems.length > 0 && (
-											<div>
-												<p className="text-xs uppercase tracking-wide text-slate-300">
-													Changed items
-												</p>
-												<ul className="mt-1 list-disc space-y-1 pl-5">
-													{semanticPreviewDiff.changedItems.map(
-														(change) => (
-															<li key={change.id}>
-																<span className="text-slate-300 line-through">
-																	{change.before.text}
-																</span>
-																<span className="mx-2 text-slate-400">
-																	→
-																</span>
-																<span className="text-amber-300">
-																	{change.after.text}
-																</span>
-																{change.before.done !==
-																	change.after.done && (
-																	<span className="ml-2 text-xs text-cyan-300">
-																		(
-																		{change.after.done
-																			? "marked done"
-																			: "marked active"}
-																		)
-																	</span>
-																)}
-															</li>
-														)
-													)}
-												</ul>
-											</div>
-										)}
-
-										{semanticPreviewDiff.removedItems.length > 0 && (
-											<div>
-												<p className="text-xs uppercase tracking-wide text-slate-300">
-													Removed items
-												</p>
-												<ul className="mt-1 list-disc space-y-1 pl-5">
-													{semanticPreviewDiff.removedItems.map(
-														(item) => (
-															<li
-																key={item.id}
-																className="text-rose-300 line-through"
-															>
-																{item.text}
-															</li>
-														)
-													)}
-												</ul>
-											</div>
-										)}
-									</div>
-								)}
-								<div className="mt-3 flex flex-wrap gap-2">
-									<button
-										onClick={handleApplySuggestion}
-										className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-950 shadow-lg shadow-emerald-500/30 transition hover:bg-emerald-400"
-									>
-										Apply suggestion
-									</button>
-									<button
-										onClick={handleDiscardSuggestion}
-										className="rounded-xl border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10"
-									>
-										Discard
-									</button>
-								</div>
-							</div>
-						)}
-
-						{semanticAuditEntries.length > 0 && (
-							<div className="rounded-xl border border-white/10 bg-white/5 p-4">
-								<p className="text-sm font-semibold text-white">
-									Recent AI changes
-								</p>
-								<ul className="mt-2 space-y-2 text-sm text-slate-200">
-									{semanticAuditEntries.map((entry) => (
-										<li
-											key={entry.id}
-											className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2"
-										>
-											<div>
-												<p className="text-white">
-													{new Date(entry.createdAt).toLocaleTimeString()}{" "}
-													• {entry.actor ?? "Unknown"}
-												</p>
-												<p className="text-xs text-slate-300">
-													{entry.actions.length} action
-													{entry.actions.length === 1 ? "" : "s"}
-												</p>
-											</div>
-											<button
-												onClick={() => handleRollback(entry.id)}
-												className="rounded-lg border border-rose-300/40 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20"
-											>
-												Rollback
-											</button>
-										</li>
-									))}
-								</ul>
-							</div>
-						)}
-					</div>
-
-					<form onSubmit={handleAdd} className="flex flex-col gap-3 sm:flex-row">
+		<div
+			className="min-h-screen flex items-center justify-center px-4"
+			style={{ background: P.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', sans-serif" }}
+		>
+			<div className="w-full max-w-[320px] flex flex-col gap-4">
+				<div>
+					<h1 className="text-lg font-semibold" style={{ color: P.text }}>
+						Collaborative Sudoku
+					</h1>
+					<p className="mt-0.5 text-sm" style={{ color: P.text3 }}>
+						Pick a name to join the game
+					</p>
+				</div>
+				<div
+					className="rounded-2xl p-5"
+					style={{ background: P.card, border: `1px solid ${P.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}
+				>
+					<form
+						onSubmit={(e) => { e.preventDefault(); const t = name.trim(); if (t) onJoin(t); }}
+						className="flex flex-col gap-3"
+					>
 						<input
-							className="flex-1 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-base text-white shadow-inner shadow-black/10 outline-none transition focus:border-emerald-300 focus:ring-2 focus:ring-emerald-400/40"
-							value={newItem}
-							onChange={(e) => setNewItem(e.target.value)}
-							placeholder="Add a shared item"
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							autoFocus
+							placeholder="Your name"
+							className="w-full rounded-xl px-3.5 py-2.5 text-sm outline-none"
+							style={{ background: P.subtle, border: `1px solid ${P.border}`, color: P.text }}
+							onFocus={(e) => { e.currentTarget.style.borderColor = P.accent; }}
+							onBlur={(e)  => { e.currentTarget.style.borderColor = P.border; }}
 						/>
 						<button
 							type="submit"
-							className="rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-emerald-950 shadow-lg shadow-emerald-500/30 transition hover:bg-emerald-400"
+							disabled={!name.trim()}
+							className="w-full rounded-xl py-2.5 text-sm font-semibold text-white transition disabled:opacity-40"
+							style={{ background: P.accent }}
 						>
-							Add
+							Join →
 						</button>
 					</form>
+				</div>
+				<p className="text-center text-xs" style={{ color: P.text3 }}>
+					created by aimee leong
+				</p>
+			</div>
+		</div>
+	);
+}
 
-					<div className="mt-5 space-y-2">
-						{snapshot.items.map((item: Item) => (
-							<div
-								key={item.id}
-								className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3 shadow-sm shadow-black/10"
+// ─── Main App ──────────────────────────────────────────────────────────────
+
+export function StarterApp() {
+	const { tree, presence, me } = useFluidRuntime();
+	const root = tree.root as AppModel;
+	const snapshot = useSharedTreeState(
+		root,
+		React.useCallback(() => getSudokuSnapshot(tree), [tree]),
+		"treeChanged"
+	);
+
+	// ── ALL hooks must come before any early return ────────────────────────
+
+	const [displayName, setDisplayName] = React.useState<string | null>(null);
+	const [selectedCellIndex, setSelectedCellIndex] = React.useState<number | null>(null);
+	const [pendingMove, setPendingMove] = React.useState<{ cellIndex: number; value: number } | null>(null);
+	const [localMessage, setLocalMessage] = React.useState<string | null>(null);
+
+	const users = usePresenceUsers(presence.users);
+
+	React.useEffect(() => {
+		if (!displayName) return;
+		registerSudokuPlayer(tree, me.id, displayName);
+	}, [tree, me.id, displayName]);
+
+	React.useEffect(() => {
+		if (!localMessage) return;
+		const t = setTimeout(() => setLocalMessage(null), 4000);
+		return () => clearTimeout(t);
+	}, [localMessage]);
+
+	const playerIndexMap = React.useMemo(() => {
+		const m = new Map<string, number>();
+		snapshot.players.forEach((p, i) => m.set(p.id, i));
+		return m;
+	}, [snapshot.players]);
+
+	const activePlayer = snapshot.players.find((p) => p.id === snapshot.currentTurnPlayerId);
+	const activePlayerIdx = playerIndexMap.get(snapshot.currentTurnPlayerId ?? "") ?? 0;
+	const activeColor = pc(activePlayerIdx);
+
+	const isMyTurn = snapshot.currentTurnPlayerId === me.id;
+	const isAdmin  = snapshot.roomAdminId === me.id;
+	const amInQueue = snapshot.players.some((p) => p.id === me.id);
+
+	const selectedCell = selectedCellIndex === null ? undefined : snapshot.cells[selectedCellIndex];
+	const canSubmit =
+		isMyTurn &&
+		selectedCellIndex !== null &&
+		selectedCell !== undefined &&
+		!selectedCell.fixed &&
+		selectedCell.value === 0 &&
+		pendingMove !== null &&
+		pendingMove.cellIndex === selectedCellIndex &&
+		pendingMove.value >= 1 &&
+		pendingMove.value <= 9;
+
+	React.useEffect(() => {
+		if (!isMyTurn) {
+			setPendingMove(null);
+			setSelectedCellIndex(null);
+		}
+	}, [isMyTurn]);
+
+	React.useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (!isMyTurn || selectedCellIndex === null) return;
+			const cell = snapshot.cells[selectedCellIndex];
+			if (!cell || cell.fixed || cell.value !== 0) return;
+			if (e.key >= "1" && e.key <= "9") {
+				setPendingMove({ cellIndex: selectedCellIndex, value: Number(e.key) });
+				setLocalMessage(null);
+			} else if (e.key === "Backspace" || e.key === "Delete" || e.key === "0") {
+				setPendingMove(null);
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, [isMyTurn, selectedCellIndex, snapshot.cells]);
+
+	// ── Early return for name picker (after all hooks) ─────────────────────
+
+	if (!displayName) {
+		return <NamePickerOverlay defaultName={me.name} onJoin={setDisplayName} />;
+	}
+
+	// ── Handlers ───────────────────────────────────────────────────────────
+
+	const handleSubmit = (e: React.FormEvent) => {
+		e.preventDefault();
+		if (!canSubmit || selectedCellIndex === null || pendingMove === null) return;
+		const result = submitSudokuMoveAndPassTurn(tree, {
+			playerId: me.id,
+			playerName: displayName,
+			cellIndex: selectedCellIndex,
+			value: pendingMove.value,
+		});
+		setLocalMessage(result.message);
+		setPendingMove(null);
+		setSelectedCellIndex(null);
+	};
+
+	const handlePass = () => {
+		if (!isMyTurn) return;
+		const result = passSudokuTurn(tree, me.id);
+		setLocalMessage(result.message);
+		setPendingMove(null);
+		setSelectedCellIndex(null);
+	};
+
+	const statusMessage = localMessage ?? snapshot.lastValidationMessage;
+
+	const cellHint =
+		selectedCellIndex !== null && pendingMove?.cellIndex === selectedCellIndex
+			? `R${Math.floor(selectedCellIndex / 9) + 1} C${(selectedCellIndex % 9) + 1} → ${pendingMove.value}`
+			: selectedCellIndex !== null
+				? `R${Math.floor(selectedCellIndex / 9) + 1} C${(selectedCellIndex % 9) + 1} — type 1–9`
+				: "";
+
+	// ── Render ─────────────────────────────────────────────────────────────
+
+	return (
+		<div
+			className="min-h-screen"
+			style={{ background: P.bg, fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', sans-serif", color: P.text }}
+		>
+			<div className="mx-auto max-w-4xl px-4 pt-5 pb-16 flex flex-col gap-5">
+
+				{/* Header */}
+				<header className="flex items-start justify-between gap-4">
+					<div>
+						<h1 className="text-base font-semibold" style={{ color: P.text }}>
+							Collaborative Sudoku
+						</h1>
+						<p className="mt-0.5 text-xs" style={{ color: P.text3 }}>
+							{snapshot.difficulty.toUpperCase()} · {users.length} online
+							{snapshot.roomAdminName ? ` · room by ${snapshot.roomAdminName}` : ""}
+						</p>
+					</div>
+					<div className="flex items-center gap-2 shrink-0">
+						{!amInQueue && (
+							<button
+								type="button"
+								onClick={() => {
+									registerSudokuPlayer(tree, me.id, displayName);
+									setLocalMessage("Rejoined the game.");
+								}}
+								className="rounded-lg px-3 py-1.5 text-xs font-medium transition"
+								style={{ background: P.card, border: `1px solid ${P.border}`, color: P.text2 }}
 							>
-								<div className="flex items-center gap-3">
-									<input
-										type="checkbox"
-										checked={item.done}
-										onChange={() => toggleItem(tree, item.id)}
-										className="h-4 w-4 rounded border-white/40 bg-transparent text-emerald-400 focus:ring-emerald-300"
-									/>
-									<div className="flex flex-col">
-										<span
-											className={
-												item.done
-													? "text-slate-400 line-through"
-													: "text-white"
-											}
-										>
-											{item.text}
-										</span>
-										{item.author && (
-											<span className="text-xs text-slate-400">
-												by {item.author}
-											</span>
-										)}
-									</div>
+								Rejoin
+							</button>
+						)}
+						<button
+							type="button"
+							onClick={() => void navigator.clipboard.writeText(window.location.href)}
+							className="rounded-lg px-3 py-1.5 text-xs font-medium transition"
+							style={{ background: P.card, border: `1px solid ${P.border}`, color: P.text3 }}
+						>
+							Copy link
+						</button>
+					</div>
+				</header>
+
+				{/* Main grid */}
+				<div className="grid gap-5 lg:grid-cols-[1fr_200px]">
+
+					{/* Board column */}
+					<section className="flex flex-col gap-3">
+
+						{/* ── TURN INDICATOR ─────────────────────────────── */}
+						{isMyTurn ? (
+							<div
+								className="rounded-2xl px-5 py-4"
+								style={{ background: P.accentLight, border: `2px solid ${P.accentBorder}` }}
+							>
+								<div className="flex items-center gap-2.5">
+									<span className="w-3 h-3 rounded-full shrink-0" style={{ background: P.accent }} />
+									<span className="text-lg font-bold tracking-tight" style={{ color: P.accent }}>
+										Your turn
+									</span>
+								</div>
+								<p className="mt-1.5 text-sm" style={{ color: P.text2 }}>
+									{cellHint
+										? `${cellHint} — press Submit or pick another cell`
+										: "Click an empty cell, then type 1–9"}
+								</p>
+							</div>
+						) : (
+							<div
+								className="rounded-2xl px-5 py-3.5"
+								style={{ background: P.card, border: `1px solid ${P.border}` }}
+							>
+								<div className="flex items-center gap-2.5">
+									{activePlayer && (
+										<span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: activeColor }} />
+									)}
+									<span className="text-sm font-medium" style={{ color: P.text2 }}>
+										{snapshot.players.length === 0
+											? "Waiting for players to join…"
+											: `${activePlayer?.name ?? "…"}'s turn`}
+									</span>
 								</div>
 							</div>
-						))}
-						{snapshot.items.length === 0 && (
-							<div className="rounded-xl border border-dashed border-white/20 px-4 py-6 text-center text-slate-300">
-								No shared items yet. Add one above or ask AI to draft a list.
-							</div>
 						)}
-					</div>
-				</section>
+
+						{/* Sudoku board */}
+						<form onSubmit={handleSubmit}>
+							<div
+								className="mx-auto w-full max-w-[min(56vh,100%)] rounded-xl overflow-hidden transition-shadow duration-300"
+								style={{
+									boxShadow: isMyTurn
+										? `0 0 0 2px ${P.accent}, 0 6px 24px rgba(82,109,138,0.14)`
+										: `0 0 0 1px ${P.border}`,
+								}}
+							>
+								<div className="grid grid-cols-9" style={{ background: P.borderMid, gap: "1px" }}>
+									{snapshot.cells.map((cell, index) => {
+										const row = Math.floor(index / 9);
+										const col = index % 9;
+										const isSelected = selectedCellIndex === index;
+										const pendingValue = pendingMove?.cellIndex === index ? pendingMove.value : null;
+										const displayValue = cell.value !== 0 ? cell.value : pendingValue;
+										const isEditable = !cell.fixed && cell.value === 0;
+
+										const mr = col % 3 === 2 && col !== 8 ? "1px" : "0";
+										const mb = row % 3 === 2 && row !== 8 ? "1px" : "0";
+
+										let bg: string;
+										let textColor: string;
+										if (isSelected)            { bg = P.accent;  textColor = "#fff"; }
+										else if (cell.fixed)       { bg = P.subtle;  textColor = P.text2; }
+										else if (pendingValue !== null) { bg = P.card; textColor = P.accent; }
+										else if (cell.value !== 0) { bg = P.card;    textColor = P.text; }
+										else                       { bg = P.card;    textColor = P.border; }
+
+										return (
+											<button
+												key={index}
+												type="button"
+												data-testid={`cell-${index}`}
+												data-fixed={cell.fixed ? "true" : "false"}
+												onClick={() => {
+													if (!isMyTurn || !isEditable) return;
+													setSelectedCellIndex(index === selectedCellIndex ? null : index);
+												}}
+												className="aspect-square flex items-center justify-center font-semibold"
+												style={{
+													background: bg,
+													color: textColor,
+													marginRight: mr,
+													marginBottom: mb,
+													fontSize: "clamp(10px,1.9vw,15px)",
+													cursor: isMyTurn && isEditable ? "pointer" : "default",
+												}}
+											>
+												{displayValue ?? ""}
+											</button>
+										);
+									})}
+								</div>
+							</div>
+
+							{/* Action bar */}
+							<div className="mt-3 flex items-center gap-2 flex-wrap">
+								{cellHint && isMyTurn && (
+									<span className="text-xs flex-1" style={{ color: P.text2 }}>{cellHint}</span>
+								)}
+								<div className="flex items-center gap-2 ml-auto">
+									<button
+										type="submit"
+										disabled={!canSubmit}
+										className="rounded-xl px-5 py-2 text-sm font-semibold text-white transition disabled:opacity-30"
+										style={{ background: P.accent }}
+									>
+										Submit move
+									</button>
+									<button
+										type="button"
+										disabled={!isMyTurn}
+										onClick={handlePass}
+										className="rounded-xl px-4 py-2 text-sm font-medium transition disabled:opacity-30"
+										style={{ background: P.card, border: `1px solid ${P.border}`, color: P.text2 }}
+									>
+										Pass
+									</button>
+								</div>
+							</div>
+						</form>
+
+						{statusMessage && (
+							<p className="text-xs" style={{ color: P.text3 }}>{statusMessage}</p>
+						)}
+					</section>
+
+					{/* Sidebar */}
+					<aside
+						className="rounded-2xl p-4 self-start"
+						style={{ background: P.card, border: `1px solid ${P.border}` }}
+					>
+						<h2 className="text-[11px] font-semibold uppercase tracking-widest mb-3" style={{ color: P.text3 }}>
+							Scoreboard
+						</h2>
+						{snapshot.players.length === 0 ? (
+							<p className="text-xs" style={{ color: P.text3 }}>No players yet.</p>
+						) : (
+							<ul className="space-y-1">
+								{snapshot.players.map((player, index) => {
+									const color = pc(index);
+									const isActive = player.id === snapshot.currentTurnPlayerId;
+									const isMe = player.id === me.id;
+									return (
+										<li
+											key={player.id}
+											className="flex items-center justify-between rounded-lg px-2 py-1.5"
+											style={{ background: isActive ? P.accentLight : "transparent" }}
+										>
+											<div className="flex items-center gap-2 min-w-0">
+												<span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+												<span
+													className="text-sm truncate"
+													style={{ color: isActive ? P.accent : P.text2, fontWeight: isActive ? 600 : 400 }}
+												>
+													{player.name}
+													{isMe && (
+														<span className="ml-1 text-xs font-normal" style={{ color: P.text3 }}>you</span>
+													)}
+												</span>
+												{isActive && (
+													<span className="text-[9px] shrink-0" style={{ color: P.accent }}>▶</span>
+												)}
+											</div>
+											<div className="flex items-center gap-1 ml-1 shrink-0">
+												<span className="text-xs font-semibold tabular-nums" style={{ color }}>
+													{player.points >= 0 ? "+" : ""}{player.points}
+												</span>
+												{isAdmin && player.id !== me.id && (
+													<button
+														type="button"
+														onClick={() => kickSudokuPlayer(tree, me.id, player.id)}
+														className="ml-1 text-[11px] leading-none transition"
+														style={{ color: P.text3 }}
+														title="Kick"
+													>
+														×
+													</button>
+												)}
+											</div>
+										</li>
+									);
+								})}
+							</ul>
+						)}
+					</aside>
+				</div>
+			</div>
+
+			<div
+				className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] select-none"
+				style={{ color: P.text3 }}
+			>
+				created by aimee leong
 			</div>
 		</div>
 	);
