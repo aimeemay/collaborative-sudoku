@@ -910,3 +910,20 @@ export function submitCoSudokuMove(
 
 	return result;
 }
+
+/** DEV ONLY — fills all empty cells with the correct solution values. */
+export function devCompletePuzzle(tree: StarterTreeView, solvedById: string): void {
+	const root = requireRoot(tree);
+	const solution = root.sudokuSolution;
+	Tree.runTransaction(root, () => {
+		root.sudokuCells.map((cell, i) => ({ cell, i })).forEach(({ cell, i }) => {
+			if (!cell.fixed && cell.value === 0) {
+				root.sudokuCells.removeAt(i);
+				root.sudokuCells.insertAt(
+					i,
+					new SudokuCell({ value: Number(solution[i]), fixed: false, solvedBy: solvedById })
+				);
+			}
+		});
+	});
+}

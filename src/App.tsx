@@ -14,6 +14,7 @@ import {
 	isNameTaken,
 	removeDisconnectedPlayers,
 	replaySudokuRoom,
+	devCompletePuzzle,
 } from "./infra/sharedTreeClient.js";
 import { usePresenceUsers, useCellPresence } from "./infra/presenceClient.js";
 import type { AppModel } from "./schema/starterSchema.js";
@@ -389,6 +390,20 @@ export function StarterApp() {
 	const [highlightNumber, setHighlightNumber] = React.useState<number | null>(null);
 	const [highlightOrigin, setHighlightOrigin] = React.useState<number | null>(null);
 	const [wrongCell, setWrongCell] = React.useState<{ index: number; value: number } | null>(null);
+	const [devPanelOpen, setDevPanelOpen] = React.useState(false);
+
+	// Cmd+, opens dev panel
+	React.useEffect(() => {
+		const handler = (e: KeyboardEvent) => {
+			if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+				e.preventDefault();
+				setDevPanelOpen((v) => !v);
+			}
+			if (e.key === "Escape") setDevPanelOpen(false);
+		};
+		window.addEventListener("keydown", handler);
+		return () => window.removeEventListener("keydown", handler);
+	}, []);
 
 	const users = usePresenceUsers(presence.users);
 	const remoteCells = useCellPresence(presence.cursor, presence.users);
@@ -1293,6 +1308,46 @@ export function StarterApp() {
 			>
 				created by aimee leong
 			</div>
+
+			{/* Dev panel — Cmd+, */}
+			{devPanelOpen && (
+				<div
+					className="fixed bottom-6 right-6 z-50 rounded-2xl p-5 flex flex-col gap-3 min-w-[220px]"
+					style={{
+						background: "#1a1a1a",
+						boxShadow: "0 8px 40px rgba(0,0,0,0.5)",
+						border: "1px solid rgba(255,255,255,0.08)",
+						fontFamily: "monospace",
+					}}
+				>
+					<div className="flex items-center justify-between">
+						<span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: "rgba(255,255,255,0.35)" }}>
+							Dev Panel
+						</span>
+						<button
+							type="button"
+							onClick={() => setDevPanelOpen(false)}
+							className="text-[14px] leading-none transition-opacity hover:opacity-60"
+							style={{ color: "rgba(255,255,255,0.4)", background: "none", border: "none", cursor: "pointer" }}
+						>
+							✕
+						</button>
+					</div>
+
+					<button
+						type="button"
+						onClick={() => { devCompletePuzzle(tree, me.id); setDevPanelOpen(false); }}
+						className="rounded-xl px-4 py-2.5 text-[12px] font-semibold text-left transition-all duration-150 hover:opacity-80"
+						style={{ background: "rgba(255,255,255,0.08)", color: "#a8d8a8", border: "1px solid rgba(168,216,168,0.2)", cursor: "pointer" }}
+					>
+						✓ Complete puzzle
+					</button>
+
+					<p className="text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
+						⌘, to toggle · Esc to close
+					</p>
+				</div>
+			)}
 		</div>
-	);
+		);
 }
