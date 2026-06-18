@@ -498,9 +498,7 @@ export function StarterApp() {
 				setGamePhase('complete');
 				// Save to leaderboard
 				if (frozenElapsed > 0) {
-					saveLeaderboardEntry({
-						id: crypto.randomUUID(),
-						completedAt: Date.now(),
+					void saveLeaderboardEntry({
 						elapsedMs: frozenElapsed,
 						difficulty: snapshot.difficulty,
 						gameMode: snapshot.gameMode,
