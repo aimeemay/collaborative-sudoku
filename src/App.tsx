@@ -907,7 +907,7 @@ export function StarterApp() {
 							{isCo ? "Classic Co-Sudoku" : "Collaborative Sudoku"}
 						</h1>
 						<p className="mt-0.5 text-[11px] font-medium" style={{ color: P.text3 }}>
-							{snapshot.difficulty.toUpperCase()} · {users.length} online
+							{snapshot.difficulty.toUpperCase()} · {snapshot.players.length > 0 ? snapshot.players.length : new Set(users.map((u) => u.value.id)).size + 1} online
 						</p>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
