@@ -139,7 +139,7 @@ function StarterBootstrap() {
 			}}
 		>
 			{/* ── Hero page ────────────────────────────────────────────── */}
-			<div className="min-h-screen flex flex-col items-center px-4 py-12">
+			<div className="relative h-screen flex flex-col items-center px-4 py-12 overflow-y-auto">
 				<div className="flex-1 flex items-center justify-center w-full">
 				<div className="w-full max-w-[360px] flex flex-col gap-5">
 
@@ -336,9 +336,9 @@ function StarterBootstrap() {
 			</div>
 			</div>
 
-			{/* Scroll-down hint */}
+			{/* Scroll-down hint — pinned to bottom of hero viewport */}
 			{leaderboard.length > 0 && (
-				<div className="flex flex-col items-center gap-1 pb-6 animate-bounce" style={{ color: P.text3 }}>
+				<div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 animate-bounce" style={{ color: P.text3 }}>
 					<span className="text-[11px] font-medium tracking-wide">Leaderboard</span>
 					<span className="text-[14px]">↓</span>
 				</div>
