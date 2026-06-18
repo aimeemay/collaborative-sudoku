@@ -29,6 +29,7 @@ export class SudokuCell extends sf.object("SudokuCell", {
 	fixed: sf.boolean,
 	lockedBy: sf.optional(sf.string),
 	lockedByName: sf.optional(sf.string),
+	solvedBy: sf.optional(sf.string),
 }) {}
 
 export class SudokuCells extends sf.array("SudokuCells", SudokuCell) {}

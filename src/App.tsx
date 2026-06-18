@@ -71,6 +71,131 @@ const glassBoldCard: React.CSSProperties = {
 	boxShadow: "0 4px 24px rgba(80,60,30,0.06), 0 0.5px 0 rgba(255,255,255,0.6) inset",
 };
 
+// ─── Sound ─────────────────────────────────────────────────────────────────
+
+// Shared AudioContext — created lazily on first user gesture
+let _audioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
+	try {
+		if (!_audioCtx) {
+			_audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+		}
+		if (_audioCtx.state === "suspended") void _audioCtx.resume();
+		return _audioCtx;
+	} catch { return null; }
+}
+
+function playSuccessSound() {
+	const ctx = getAudioCtx();
+	if (!ctx) return;
+	([523.25, 659.25, 783.99] as const).forEach((freq, i) => {
+		const osc = ctx.createOscillator();
+		const gain = ctx.createGain();
+		osc.connect(gain);
+		gain.connect(ctx.destination);
+		osc.type = "sine";
+		osc.frequency.value = freq;
+		const t = ctx.currentTime + i * 0.075;
+		gain.gain.setValueAtTime(0, t);
+		gain.gain.linearRampToValueAtTime(0.14, t + 0.02);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.30);
+		osc.start(t);
+		osc.stop(t + 0.32);
+	});
+}
+
+function playWrongSound() {
+	const ctx = getAudioCtx();
+	if (!ctx) return;
+	// Descending droopy slide — melancholy whomp
+	const osc = ctx.createOscillator();
+	const gain = ctx.createGain();
+	osc.connect(gain);
+	gain.connect(ctx.destination);
+	osc.type = "sine";
+	const now = ctx.currentTime;
+	osc.frequency.setValueAtTime(340, now);
+	osc.frequency.exponentialRampToValueAtTime(150, now + 0.42);
+	gain.gain.setValueAtTime(0.18, now);
+	gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+	osc.start(now);
+	osc.stop(now + 0.57);
+}
+
+// ─── Confetti particles ────────────────────────────────────────────────────
+
+const CONFETTI_COLORS = [
+	'#e8706a', // coral
+	'#6b8dd4', // cobalt blue
+	'#5ecfb8', // teal mint
+	'#f0b340', // amber gold
+	'#d4a0c8', // lavender
+	'#e8a090', // salmon peach
+	'#4eb5d4', // sky blue
+	'#f07a5a', // burnt coral
+];
+
+type ConfettiParticle = {
+	id: number;
+	left: number; // % x within cell
+	top: number;  // % y start
+	dx: number;   // px final x offset from start
+	dy: number;   // px final y offset from start
+	width: number;
+	height: number;
+	radius: string;
+	color: string;
+	borderColor?: string;
+	delay: number;
+	duration: number;
+	spin: number;
+};
+
+function makeConfetti(cellIdx: number, playerColor: string): ConfettiParticle[] {
+	// Simple seeded LCG so each cell gets consistent-but-varied particles
+	let seed = (cellIdx + 1) * 1664525 + 1013904223;
+	const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+	const colors = [playerColor, ...CONFETTI_COLORS];
+	return Array.from({ length: 10 }, (_, i) => {
+		const angle = (i / 10) * Math.PI * 2 + rng() * 1.2;
+		const dist = 14 + rng() * 16;
+		const typeRoll = rng();
+		// shapes: filled circle, ring, pill, small dot
+		let width: number, height: number, radius: string, borderColor: string | undefined;
+		if (typeRoll < 0.30) {
+			// filled circle
+			const s = 4 + rng() * 5; width = s; height = s; radius = '50%';
+		} else if (typeRoll < 0.50) {
+			// ring (outline circle)
+			const s = 5 + rng() * 5; width = s; height = s; radius = '50%';
+			borderColor = colors[(i + cellIdx + 3) % colors.length];
+		} else if (typeRoll < 0.75) {
+			// pill
+			width = 6 + rng() * 6; height = 3 + rng() * 2; radius = '99px';
+		} else {
+			// tiny dot
+			const s = 2 + rng() * 2; width = s; height = s; radius = '50%';
+		}
+		return {
+			id: i,
+			left: 20 + rng() * 60,
+			top: 10 + rng() * 50,
+			dx: Math.cos(angle) * dist,
+			dy: Math.sin(angle) * dist + 10,
+			width,
+			height,
+			radius,
+			color: borderColor ? 'transparent' : colors[(i + cellIdx) % colors.length],
+			borderColor,
+			delay: rng() * 100,
+			duration: 420 + rng() * 220,
+			spin: (rng() - 0.5) * 600,
+		};
+	});
+}
+
+
 // ─── Name Picker ───────────────────────────────────────────────────────────
 
 function NamePickerOverlay({
@@ -97,10 +222,10 @@ function NamePickerOverlay({
 			<div className="w-full max-w-[340px] flex flex-col gap-5">
 				<div className="text-center">
 					<h1 className="text-xl font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
-						Collaborative Sudoku
+						What's Your Name?
 					</h1>
 					<p className="mt-1 text-[13px]" style={{ color: P.text3 }}>
-						Pick a name to join the game
+						This is the alias the room will know you by
 					</p>
 				</div>
 				<div
@@ -154,10 +279,14 @@ function NamePickerOverlay({
 						</button>
 					</form>
 				</div>
-				<p className="text-center text-[11px] font-medium" style={{ color: P.text3 }}>
-					created by aimee leong
-				</p>
 			</div>
+			<div
+				className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none"
+				style={{ color: P.text3 }}
+			>
+				created by aimee leong
+			</div>
+
 		</div>
 	);
 }
@@ -181,9 +310,9 @@ export function StarterApp() {
 	const [selectedCellIndex, setSelectedCellIndex] = React.useState<number | null>(null);
 	const [pendingMove, setPendingMove] = React.useState<{ cellIndex: number; value: number } | null>(null);
 	const [copied, setCopied] = React.useState(false);
-	// Highlight helpers: tapping a filled cell highlights matching numbers + row/col
 	const [highlightNumber, setHighlightNumber] = React.useState<number | null>(null);
 	const [highlightOrigin, setHighlightOrigin] = React.useState<number | null>(null);
+	const [wrongCell, setWrongCell] = React.useState<{ index: number; value: number } | null>(null);
 
 	const users = usePresenceUsers(presence.users);
 	const remoteCells = useCellPresence(presence.cursor, presence.users);
@@ -201,6 +330,42 @@ export function StarterApp() {
 
 	const myPlayerIdx = playerIndexMap.get(me.id) ?? 0;
 	const myColor = pc(myPlayerIdx);
+
+	// ── Celebration state ──────────────────────────────────────────────────
+	const [confettiCells, setConfettiCells] = React.useState<Map<number, ConfettiParticle[]>>(new Map());
+	const prevCellValuesRef = React.useRef<number[]>([]);
+
+	React.useEffect(() => {
+		const prev = prevCellValuesRef.current;
+		const curr = snapshot.cells.map((c) => c.value);
+		if (prev.length > 0) {
+			const newlySet: Array<[number, number]> = [];
+			snapshot.cells.forEach((cell, i) => {
+				if (!cell.fixed && (prev[i] ?? 0) === 0 && cell.value !== 0) {
+					const solverIdx = cell.solvedBy ? (playerIndexMap.get(cell.solvedBy) ?? 0) : myPlayerIdx;
+					newlySet.push([i, solverIdx]);
+				}
+			});
+			if (newlySet.length > 0) {
+				playSuccessSound();
+				setConfettiCells((old) => {
+					const next = new Map(old);
+					newlySet.forEach(([idx, colorIdx]) => {
+						next.set(idx, makeConfetti(idx, pc(colorIdx)));
+					});
+					return next;
+				});
+				setTimeout(() => {
+					setConfettiCells((old) => {
+						const next = new Map(old);
+						newlySet.forEach(([idx]) => next.delete(idx));
+						return next;
+					});
+				}, 750);
+			}
+		}
+		prevCellValuesRef.current = curr;
+	}, [snapshot.cells, playerIndexMap, myPlayerIdx]);
 
 	// Broadcast my hovered cell to other players
 	React.useEffect(() => {
@@ -243,27 +408,35 @@ export function StarterApp() {
 
 	React.useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			// Cmd/Ctrl+Enter submits the staged move from anywhere
-			if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+			// Enter submits the staged move from anywhere
+			if (!e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === "Enter") {
 				if (canSubmit && selectedCellIndex !== null && pendingMove !== null && displayName) {
 					e.preventDefault();
+					const cellIdx = selectedCellIndex;
+					const pendingVal = pendingMove.value;
+					let result;
 					if (isCo) {
-						submitCoSudokuMove(tree, {
+						result = submitCoSudokuMove(tree, {
 							playerId: me.id,
 							playerName: displayName,
-							cellIndex: selectedCellIndex,
-							value: pendingMove.value,
+							cellIndex: cellIdx,
+							value: pendingVal,
 						});
 					} else {
-						submitSudokuMoveAndPassTurn(tree, {
+						result = submitSudokuMoveAndPassTurn(tree, {
 							playerId: me.id,
 							playerName: displayName,
-							cellIndex: selectedCellIndex,
-							value: pendingMove.value,
+							cellIndex: cellIdx,
+							value: pendingVal,
 						});
 					}
 					setPendingMove(null);
 					setSelectedCellIndex(null);
+					if (!result.committed) {
+						playWrongSound();
+						setWrongCell({ index: cellIdx, value: pendingVal });
+						setTimeout(() => setWrongCell(null), 750);
+					}
 				}
 				return;
 			}
@@ -388,23 +561,33 @@ export function StarterApp() {
 		e.preventDefault();
 		if (!canSubmit || selectedCellIndex === null || pendingMove === null) return;
 
+		const cellIdx = selectedCellIndex;
+		const pendingVal = pendingMove.value;
+
+		let result;
 		if (isCo) {
-			submitCoSudokuMove(tree, {
+			result = submitCoSudokuMove(tree, {
 				playerId: me.id,
 				playerName: displayName,
-				cellIndex: selectedCellIndex,
-				value: pendingMove.value,
+				cellIndex: cellIdx,
+				value: pendingVal,
 			});
 		} else {
-			submitSudokuMoveAndPassTurn(tree, {
+			result = submitSudokuMoveAndPassTurn(tree, {
 				playerId: me.id,
 				playerName: displayName,
-				cellIndex: selectedCellIndex,
-				value: pendingMove.value,
+				cellIndex: cellIdx,
+				value: pendingVal,
 			});
 		}
 		setPendingMove(null);
 		setSelectedCellIndex(null);
+
+		if (!result.committed) {
+			playWrongSound();
+			setWrongCell({ index: cellIdx, value: pendingVal });
+			setTimeout(() => setWrongCell(null), 750);
+		}
 	};
 
 	const handlePass = () => {
@@ -438,7 +621,6 @@ export function StarterApp() {
 						</h1>
 						<p className="mt-0.5 text-[12px] font-medium" style={{ color: P.text3 }}>
 							{snapshot.difficulty.toUpperCase()} · {users.length} online
-							{isCo ? " · simultaneous" : ""}
 						</p>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
@@ -519,15 +701,22 @@ export function StarterApp() {
 										let textColor: string;
 										let fontWeight = 500;
 										let outline = "";
+										const isCelebrating = confettiCells.has(index);
+										const isWrong = wrongCell?.index === index;
+										const solverColorIdx = cell.solvedBy ? (playerIndexMap.get(cell.solvedBy) ?? -1) : -1;
+										const solverColor = solverColorIdx >= 0 ? pc(solverColorIdx) : null;
+										// Use wrongCell value as display override during fade animation
+										const effectiveDisplayValue = isWrong ? wrongCell!.value : displayValue;
 										if (isSelected)                    { bg = myColor;    textColor = "#fff"; fontWeight = 700; }
 										else if (lockedByOther)            { bg = `${lockerColor}15`; textColor = lockerColor; fontWeight = 600; outline = `2px solid ${lockerColor}40`; }
 										else if (lockedByMe)               { bg = `${myColor}15`; textColor = myColor; fontWeight = 600; outline = `2px solid ${myColor}40`; }
 										else if (isHighlightOriginCell)    { bg = "#ede8e0"; textColor = P.text; fontWeight = 700; }
 										else if (isNumberMatch)            { bg = "#f2ede6"; textColor = P.text; fontWeight = 700; }
-										else if (isRowColHighlight)        { bg = "#f7f3ee"; textColor = cell.fixed ? P.text2 : cell.value !== 0 ? P.text : "rgba(0,0,0,0.08)"; fontWeight = cell.fixed || cell.value !== 0 ? 500 : 400; }
+										else if (isRowColHighlight)        { bg = "#f7f3ee"; textColor = cell.fixed ? P.text2 : cell.value !== 0 ? (solverColor ?? P.text) : "rgba(0,0,0,0.08)"; fontWeight = cell.fixed || cell.value !== 0 ? 500 : 400; }
 										else if (cell.fixed)               { bg = P.cellFixed; textColor = P.text2; fontWeight = 600; }
 										else if (pendingValue !== null)     { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
-										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = P.text; fontWeight = 600; }
+										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = solverColor ?? P.text; fontWeight = 600; }
+										else if (isWrong)                  { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
 										else                               { bg = P.cellEmpty; textColor = "rgba(0,0,0,0.08)"; }
 
 										return (
@@ -535,12 +724,14 @@ export function StarterApp() {
 												key={index}
 												type="button"
 												data-testid={`cell-${index}`}
+												data-cell-index={index}
 												data-fixed={cell.fixed ? "true" : "false"}
 												onClick={() => handleCellClick(index)}
-												className="aspect-square flex items-center justify-center transition-colors duration-100 relative"
+												className={`aspect-square flex items-center justify-center relative${isWrong ? " cell-wrong" : ""}`}
 												style={{
 													background: bg,
 													color: textColor,
+													transition: "background 100ms ease, color 500ms ease-out",
 													borderRight: borderR,
 													borderBottom: borderB,
 													fontSize: "clamp(14px, 2.4vw, 20px)",
@@ -550,9 +741,33 @@ export function StarterApp() {
 													letterSpacing: "-0.01em",
 													outline,
 													outlineOffset: "-2px",
+													overflow: "hidden",
 												}}
 											>
-												{displayValue ?? ""}
+												<span className={isCelebrating ? "cell-celebrate-number" : isWrong ? "cell-wrong-number" : undefined}>
+													{effectiveDisplayValue ?? ""}
+												</span>
+												{/* Confetti particles */}
+												{isCelebrating && confettiCells.get(index)!.map((p) => (
+													<span
+														key={p.id}
+														className="confetti-particle"
+														style={{
+															left: `${p.left}%`,
+															top: `${p.top}%`,
+															width: p.width,
+															height: p.height,
+															borderRadius: p.radius,
+															background: p.color,
+															border: p.borderColor ? `1.5px solid ${p.borderColor}` : undefined,
+															animationDuration: `${p.duration}ms`,
+															animationDelay: `${p.delay}ms`,
+															['--dx' as string]: `${p.dx}px`,
+															['--dy' as string]: `${p.dy}px`,
+															['--spin' as string]: `${p.spin}deg`,
+														}}
+													/>
+												))}
 												{lockedByOther && !displayValue && (
 													<span
 														className="absolute bottom-0.5 right-0.5 w-1.5 h-1.5 rounded-full"
@@ -591,7 +806,7 @@ export function StarterApp() {
 									}}
 								>
 									Submit
-									<span className="ml-1.5 text-[10px] font-normal opacity-70">⌘↵</span>
+									<span className="ml-1.5 text-[10px] font-normal opacity-70">↵</span>
 								</button>
 								{!isCo && (
 									<button
@@ -605,9 +820,6 @@ export function StarterApp() {
 									</button>
 								)}
 							</div>
-							<p className="mt-2 text-[11px] text-right" style={{ color: P.text3 }}>
-								Correct +1 · Incorrect −1{!isCo ? " · Pass 0" : ""}
-							</p>
 						</div>
 					</form>
 
@@ -618,6 +830,7 @@ export function StarterApp() {
 					>
 						{/* Turn / mode indicator */}
 						{isCo ? (
+							<>
 							<div
 								className="rounded-2xl px-4 py-3"
 								style={{
@@ -641,13 +854,25 @@ export function StarterApp() {
 										</li>
 									))}
 								</ol>
-								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mt-2.5 mb-1.5" style={{ color: P.text3 }}>
+							</div>
+							<div
+								className="rounded-2xl px-4 py-3"
+								style={{
+									background: "rgba(0,0,0,0.02)",
+									border: `1px solid rgba(0,0,0,0.04)`,
+								}}
+							>
+								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-1.5" style={{ color: P.text3 }}>
 									How To Win
 								</p>
 								<p className="text-[11px] leading-relaxed" style={{ color: P.text2 }}>
 									We win together — pick up points (and friends) along the way.
 								</p>
+								<p className="text-[11px] mt-1.5" style={{ color: P.text3 }}>
+									Correct +1 · Incorrect −1
+								</p>
 							</div>
+							</>
 						) : (
 							<div
 								className="rounded-2xl px-4 py-3"

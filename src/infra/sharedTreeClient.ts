@@ -299,7 +299,7 @@ export function rollbackSemanticEdit(tree: StarterTreeView, auditId: string): bo
 }
 
 export type SudokuSnapshot = {
-	cells: Array<{ value: number; fixed: boolean; lockedBy?: string; lockedByName?: string }>;
+	cells: Array<{ value: number; fixed: boolean; lockedBy?: string; lockedByName?: string; solvedBy?: string }>;
 	players: Array<{ id: string; name: string; points: number }>;
 	currentTurnPlayerId?: string;
 	lastValidationMessage?: string;
@@ -323,6 +323,7 @@ export function getSudokuSnapshot(tree: StarterTreeView): SudokuSnapshot {
 			fixed: cell.fixed,
 			lockedBy: cell.lockedBy,
 			lockedByName: cell.lockedByName,
+			solvedBy: cell.solvedBy,
 		})),
 		players: root.sudokuPlayers.map((player) => ({
 			id: player.id,
@@ -487,7 +488,7 @@ export function submitSudokuMoveAndPassTurn(
 		root.sudokuCells.removeAt(move.cellIndex);
 		root.sudokuCells.insertAt(
 			move.cellIndex,
-			new SudokuCell({ value: move.value, fixed: existingCell.fixed })
+			new SudokuCell({ value: move.value, fixed: existingCell.fixed, solvedBy: move.playerId })
 		);
 
 		const playerIndex = root.sudokuPlayers.findIndex((player) => player.id === move.playerId);
@@ -853,7 +854,7 @@ export function submitCoSudokuMove(
 		root.sudokuCells.removeAt(move.cellIndex);
 		root.sudokuCells.insertAt(
 			move.cellIndex,
-			new SudokuCell({ value: move.value, fixed: false })
+			new SudokuCell({ value: move.value, fixed: false, solvedBy: move.playerId })
 		);
 		if (playerIndex >= 0) {
 			const player = root.sudokuPlayers[playerIndex];

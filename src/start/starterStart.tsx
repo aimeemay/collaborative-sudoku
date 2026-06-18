@@ -319,7 +319,7 @@ function StarterBootstrap() {
 			</div>
 			</div>
 
-			<p className="text-center text-[11px] font-medium pb-2" style={{ color: P.text3 }}>
+			<p className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none" style={{ color: P.text3 }}>
 				created by aimee leong
 			</p>
 		</div>
