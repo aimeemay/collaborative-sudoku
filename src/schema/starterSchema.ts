@@ -29,6 +29,7 @@ export class SudokuCell extends sf.object("SudokuCell", {
 	fixed: sf.boolean,
 	lockedBy: sf.optional(sf.string),
 	lockedByName: sf.optional(sf.string),
+	solvedBy: sf.optional(sf.string),
 }) {}
 
 export class SudokuCells extends sf.array("SudokuCells", SudokuCell) {}
@@ -54,6 +55,7 @@ export class AppModel extends sf.object("AppModel", {
 	roomAdminId: sf.optional(sf.string),
 	roomAdminName: sf.optional(sf.string),
 	gameMode: sf.optional(sf.string),
+	gameStartedAt: sf.optional(sf.number),
 }) {}
 
 export const starterTreeConfiguration = new TreeViewConfiguration({ schema: AppModel });

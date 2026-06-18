@@ -204,7 +204,7 @@ function StarterBootstrap() {
 								border: "1px solid rgba(0,0,0,0.04)",
 							}}
 						>
-							{([["cosudoku", "CoSudoku"], ["classic", "Turn-Based"]] as const).map(([m, label]) => (
+							{([["cosudoku", "Classic"], ["classic", "Turn-Based"]] as const).map(([m, label]) => (
 								<button
 									key={m}
 									type="button"
@@ -224,7 +224,7 @@ function StarterBootstrap() {
 						</div>
 						{gameMode === "cosudoku" && (
 							<p className="text-[11px] mt-0.5" style={{ color: P.text3 }}>
-								All players solve simultaneously — no turns.
+								All players solve puzzle collaboratively, live.
 							</p>
 						)}
 						{gameMode === "classic" && (
@@ -319,7 +319,7 @@ function StarterBootstrap() {
 			</div>
 			</div>
 
-			<p className="text-center text-[11px] font-medium pb-2" style={{ color: P.text3 }}>
+			<p className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none" style={{ color: P.text3 }}>
 				created by aimee leong
 			</p>
 		</div>

@@ -23,6 +23,10 @@ You are editing a Fluid + React starter where collaboration correctness matters.
 - Do not reintroduce legacy canvas/table/comment features unless explicitly requested.
 - Keep local mode (`VITE_FLUID_CLIENT=local`) as the easiest default path.
 
+## Dev Server
+
+To start the dev server, always run `npm run start:local` from the repo root. This starts both tinylicious (the Fluid relay server) and Vite together. Never run `npm run dev` alone — it won't start the Fluid server.
+
 ## Validation
 
 After changes, run:

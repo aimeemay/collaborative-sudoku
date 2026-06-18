@@ -13,6 +13,7 @@ import {
 	claimAdminRole,
 	isNameTaken,
 	removeDisconnectedPlayers,
+	replaySudokuRoom,
 } from "./infra/sharedTreeClient.js";
 import { usePresenceUsers, useCellPresence } from "./infra/presenceClient.js";
 import type { AppModel } from "./schema/starterSchema.js";
@@ -71,6 +72,206 @@ const glassBoldCard: React.CSSProperties = {
 	boxShadow: "0 4px 24px rgba(80,60,30,0.06), 0 0.5px 0 rgba(255,255,255,0.6) inset",
 };
 
+// ─── Sound ─────────────────────────────────────────────────────────────────
+
+// Shared AudioContext — created lazily on first user gesture
+let _audioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
+	try {
+		if (!_audioCtx) {
+			_audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+		}
+		if (_audioCtx.state === "suspended") void _audioCtx.resume();
+		return _audioCtx;
+	} catch { return null; }
+}
+
+function playSuccessSound() {
+	const ctx = getAudioCtx();
+	if (!ctx) return;
+	([523.25, 659.25, 783.99] as const).forEach((freq, i) => {
+		const osc = ctx.createOscillator();
+		const gain = ctx.createGain();
+		osc.connect(gain);
+		gain.connect(ctx.destination);
+		osc.type = "sine";
+		osc.frequency.value = freq;
+		const t = ctx.currentTime + i * 0.075;
+		gain.gain.setValueAtTime(0, t);
+		gain.gain.linearRampToValueAtTime(0.14, t + 0.02);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 0.30);
+		osc.start(t);
+		osc.stop(t + 0.32);
+	});
+}
+
+function playWrongSound() {
+	const ctx = getAudioCtx();
+	if (!ctx) return;
+	// Descending droopy slide — melancholy whomp
+	const osc = ctx.createOscillator();
+	const gain = ctx.createGain();
+	osc.connect(gain);
+	gain.connect(ctx.destination);
+	osc.type = "sine";
+	const now = ctx.currentTime;
+	osc.frequency.setValueAtTime(340, now);
+	osc.frequency.exponentialRampToValueAtTime(150, now + 0.42);
+	gain.gain.setValueAtTime(0.18, now);
+	gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+	osc.start(now);
+	osc.stop(now + 0.57);
+}
+
+function playVictorySound() {
+	const ctx = getAudioCtx();
+	if (!ctx) return;
+	// Triumphant yayyyy — ascending major chord arpeggio then full chord bloom
+	const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5]; // C5 E5 G5 C6 E6
+	const delays = [0, 0.10, 0.20, 0.30, 0.42];
+	const now = ctx.currentTime;
+	notes.forEach((freq, i) => {
+		const osc = ctx.createOscillator();
+		const gain = ctx.createGain();
+		osc.connect(gain);
+		gain.connect(ctx.destination);
+		osc.type = i < 3 ? "triangle" : "sine";
+		osc.frequency.setValueAtTime(freq, now);
+		const t = now + delays[i];
+		gain.gain.setValueAtTime(0, t);
+		gain.gain.linearRampToValueAtTime(0.14, t + 0.05);
+		gain.gain.setValueAtTime(0.14, t + 0.25);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+		osc.start(t);
+		osc.stop(t + 1.5);
+	});
+}
+
+// ─── Confetti particles ────────────────────────────────────────────────────
+
+const CONFETTI_COLORS = [
+	'#e8706a', // coral
+	'#6b8dd4', // cobalt blue
+	'#5ecfb8', // teal mint
+	'#f0b340', // amber gold
+	'#d4a0c8', // lavender
+	'#e8a090', // salmon peach
+	'#4eb5d4', // sky blue
+	'#f07a5a', // burnt coral
+];
+
+type ConfettiParticle = {
+	id: number;
+	left: number; // % x within cell
+	top: number;  // % y start
+	dx: number;   // px final x offset from start
+	dy: number;   // px final y offset from start
+	width: number;
+	height: number;
+	radius: string;
+	color: string;
+	borderColor?: string;
+	delay: number;
+	duration: number;
+	spin: number;
+};
+
+function makeConfetti(cellIdx: number, playerColor: string): ConfettiParticle[] {
+	// Simple seeded LCG so each cell gets consistent-but-varied particles
+	let seed = (cellIdx + 1) * 1664525 + 1013904223;
+	const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+	const colors = [playerColor, ...CONFETTI_COLORS];
+	return Array.from({ length: 10 }, (_, i) => {
+		const angle = (i / 10) * Math.PI * 2 + rng() * 1.2;
+		const dist = 14 + rng() * 16;
+		const typeRoll = rng();
+		// shapes: filled circle, ring, pill, small dot
+		let width: number, height: number, radius: string, borderColor: string | undefined;
+		if (typeRoll < 0.30) {
+			// filled circle
+			const s = 4 + rng() * 5; width = s; height = s; radius = '50%';
+		} else if (typeRoll < 0.50) {
+			// ring (outline circle)
+			const s = 5 + rng() * 5; width = s; height = s; radius = '50%';
+			borderColor = colors[(i + cellIdx + 3) % colors.length];
+		} else if (typeRoll < 0.75) {
+			// pill
+			width = 6 + rng() * 6; height = 3 + rng() * 2; radius = '99px';
+		} else {
+			// tiny dot
+			const s = 2 + rng() * 2; width = s; height = s; radius = '50%';
+		}
+		return {
+			id: i,
+			left: 20 + rng() * 60,
+			top: 10 + rng() * 50,
+			dx: Math.cos(angle) * dist,
+			dy: Math.sin(angle) * dist + 10,
+			width,
+			height,
+			radius,
+			color: borderColor ? 'transparent' : colors[(i + cellIdx) % colors.length],
+			borderColor,
+			delay: rng() * 100,
+			duration: 420 + rng() * 220,
+			spin: (rng() - 0.5) * 600,
+		};
+	});
+}
+
+// ─── Victory confetti (full-screen rain) ─────────────────────────────────────
+
+type VictoryParticle = {
+	id: number;
+	left: number;   // vw %
+	width: number;
+	height: number;
+	radius: string;
+	color: string;
+	borderColor?: string;
+	delay: number;  // ms
+	duration: number; // ms
+	spin: number;
+	drift: number; // px horizontal drift during fall
+};
+
+function makeVictoryConfetti(): VictoryParticle[] {
+	return Array.from({ length: 60 }, (_, i) => {
+		const rng = (() => {
+			let s = (i + 1) * 22695477 + 1;
+			return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+		})();
+		const typeRoll = rng();
+		let width: number, height: number, radius: string, borderColor: string | undefined;
+		const color = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+		if (typeRoll < 0.25) {
+			const s = 6 + rng() * 8; width = s; height = s; radius = '50%';
+		} else if (typeRoll < 0.45) {
+			const s = 6 + rng() * 7; width = s; height = s; radius = '50%';
+			borderColor = CONFETTI_COLORS[(i + 3) % CONFETTI_COLORS.length];
+		} else if (typeRoll < 0.70) {
+			width = 8 + rng() * 10; height = 4 + rng() * 3; radius = '99px';
+		} else {
+			const s = 3 + rng() * 3; width = s; height = s; radius = '50%';
+		}
+		return {
+			id: i,
+			left: rng() * 100,
+			width,
+			height,
+			radius,
+			color: borderColor ? 'transparent' : color,
+			borderColor,
+			delay: rng() * 1200,
+			duration: 1800 + rng() * 1400,
+			spin: (rng() - 0.5) * 720,
+			drift: (rng() - 0.5) * 80,
+		};
+	});
+}
+
+
 // ─── Name Picker ───────────────────────────────────────────────────────────
 
 function NamePickerOverlay({
@@ -97,10 +298,10 @@ function NamePickerOverlay({
 			<div className="w-full max-w-[340px] flex flex-col gap-5">
 				<div className="text-center">
 					<h1 className="text-xl font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
-						Collaborative Sudoku
+						What's Your Name?
 					</h1>
 					<p className="mt-1 text-[13px]" style={{ color: P.text3 }}>
-						Pick a name to join the game
+						This is the alias the room will know you by
 					</p>
 				</div>
 				<div
@@ -154,10 +355,14 @@ function NamePickerOverlay({
 						</button>
 					</form>
 				</div>
-				<p className="text-center text-[11px] font-medium" style={{ color: P.text3 }}>
-					created by aimee leong
-				</p>
 			</div>
+			<div
+				className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none"
+				style={{ color: P.text3 }}
+			>
+				created by aimee leong
+			</div>
+
 		</div>
 	);
 }
@@ -181,9 +386,9 @@ export function StarterApp() {
 	const [selectedCellIndex, setSelectedCellIndex] = React.useState<number | null>(null);
 	const [pendingMove, setPendingMove] = React.useState<{ cellIndex: number; value: number } | null>(null);
 	const [copied, setCopied] = React.useState(false);
-	// Highlight helpers: tapping a filled cell highlights matching numbers + row/col
 	const [highlightNumber, setHighlightNumber] = React.useState<number | null>(null);
 	const [highlightOrigin, setHighlightOrigin] = React.useState<number | null>(null);
+	const [wrongCell, setWrongCell] = React.useState<{ index: number; value: number } | null>(null);
 
 	const users = usePresenceUsers(presence.users);
 	const remoteCells = useCellPresence(presence.cursor, presence.users);
@@ -201,6 +406,68 @@ export function StarterApp() {
 
 	const myPlayerIdx = playerIndexMap.get(me.id) ?? 0;
 	const myColor = pc(myPlayerIdx);
+
+	// ── Celebration state ──────────────────────────────────────────────────
+	const [confettiCells, setConfettiCells] = React.useState<Map<number, ConfettiParticle[]>>(new Map());
+	const prevCellValuesRef = React.useRef<number[]>([]);
+
+	React.useEffect(() => {
+		const prev = prevCellValuesRef.current;
+		const curr = snapshot.cells.map((c) => c.value);
+		if (prev.length > 0) {
+			const newlySet: Array<[number, number]> = [];
+			snapshot.cells.forEach((cell, i) => {
+				if (!cell.fixed && (prev[i] ?? 0) === 0 && cell.value !== 0) {
+					const solverIdx = cell.solvedBy ? (playerIndexMap.get(cell.solvedBy) ?? 0) : myPlayerIdx;
+					newlySet.push([i, solverIdx]);
+				}
+			});
+			if (newlySet.length > 0) {
+				playSuccessSound();
+				setConfettiCells((old) => {
+					const next = new Map(old);
+					newlySet.forEach(([idx, colorIdx]) => {
+						next.set(idx, makeConfetti(idx, pc(colorIdx)));
+					});
+					return next;
+				});
+				setTimeout(() => {
+					setConfettiCells((old) => {
+						const next = new Map(old);
+						newlySet.forEach(([idx]) => next.delete(idx));
+						return next;
+					});
+				}, 750);
+			}
+		}
+		prevCellValuesRef.current = curr;
+	}, [snapshot.cells, playerIndexMap, myPlayerIdx]);
+
+	// ── Victory detection ───────────────────────────────────────────────────
+	const isPuzzleComplete = React.useMemo(() =>
+		snapshot.cells.length === 81 &&
+		snapshot.cells.every((c, i) => c.value !== 0 && c.value.toString() === snapshot.solution[i]),
+		[snapshot.cells, snapshot.solution]
+	);
+
+	type GamePhase = 'playing' | 'complete';
+	const [gamePhase, setGamePhase] = React.useState<GamePhase>('playing');
+	const [victoryConfetti, setVictoryConfetti] = React.useState<VictoryParticle[]>([]);
+	const victoryFiredRef = React.useRef(false);
+
+	React.useEffect(() => {
+		if (isPuzzleComplete && !victoryFiredRef.current) {
+			victoryFiredRef.current = true;
+			setTimeout(() => {
+				playVictorySound();
+				setVictoryConfetti(makeVictoryConfetti());
+				setGamePhase('complete');
+			}, 600); // small delay to let last cell animation play
+		}
+		if (!isPuzzleComplete) {
+			victoryFiredRef.current = false;
+		}
+	}, [isPuzzleComplete]);
 
 	// Broadcast my hovered cell to other players
 	React.useEffect(() => {
@@ -243,27 +510,35 @@ export function StarterApp() {
 
 	React.useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
-			// Cmd/Ctrl+Enter submits the staged move from anywhere
-			if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+			// Enter submits the staged move from anywhere
+			if (!e.metaKey && !e.ctrlKey && !e.shiftKey && e.key === "Enter") {
 				if (canSubmit && selectedCellIndex !== null && pendingMove !== null && displayName) {
 					e.preventDefault();
+					const cellIdx = selectedCellIndex;
+					const pendingVal = pendingMove.value;
+					let result;
 					if (isCo) {
-						submitCoSudokuMove(tree, {
+						result = submitCoSudokuMove(tree, {
 							playerId: me.id,
 							playerName: displayName,
-							cellIndex: selectedCellIndex,
-							value: pendingMove.value,
+							cellIndex: cellIdx,
+							value: pendingVal,
 						});
 					} else {
-						submitSudokuMoveAndPassTurn(tree, {
+						result = submitSudokuMoveAndPassTurn(tree, {
 							playerId: me.id,
 							playerName: displayName,
-							cellIndex: selectedCellIndex,
-							value: pendingMove.value,
+							cellIndex: cellIdx,
+							value: pendingVal,
 						});
 					}
 					setPendingMove(null);
 					setSelectedCellIndex(null);
+					if (!result.committed) {
+						playWrongSound();
+						setWrongCell({ index: cellIdx, value: pendingVal });
+						setTimeout(() => setWrongCell(null), 750);
+					}
 				}
 				return;
 			}
@@ -388,23 +663,33 @@ export function StarterApp() {
 		e.preventDefault();
 		if (!canSubmit || selectedCellIndex === null || pendingMove === null) return;
 
+		const cellIdx = selectedCellIndex;
+		const pendingVal = pendingMove.value;
+
+		let result;
 		if (isCo) {
-			submitCoSudokuMove(tree, {
+			result = submitCoSudokuMove(tree, {
 				playerId: me.id,
 				playerName: displayName,
-				cellIndex: selectedCellIndex,
-				value: pendingMove.value,
+				cellIndex: cellIdx,
+				value: pendingVal,
 			});
 		} else {
-			submitSudokuMoveAndPassTurn(tree, {
+			result = submitSudokuMoveAndPassTurn(tree, {
 				playerId: me.id,
 				playerName: displayName,
-				cellIndex: selectedCellIndex,
-				value: pendingMove.value,
+				cellIndex: cellIdx,
+				value: pendingVal,
 			});
 		}
 		setPendingMove(null);
 		setSelectedCellIndex(null);
+
+		if (!result.committed) {
+			playWrongSound();
+			setWrongCell({ index: cellIdx, value: pendingVal });
+			setTimeout(() => setWrongCell(null), 750);
+		}
 	};
 
 	const handlePass = () => {
@@ -419,6 +704,26 @@ export function StarterApp() {
 
 	const roomCode = new URLSearchParams(window.location.search).get("id") ?? "";
 
+	const elapsedMs = snapshot.gameStartedAt ? Date.now() - snapshot.gameStartedAt : 0;
+	const elapsedSecs = Math.floor(elapsedMs / 1000);
+	const elapsedDisplay = elapsedMs > 0
+		? `${Math.floor(elapsedSecs / 60)}:${String(elapsedSecs % 60).padStart(2, '0')}`
+		: '—';
+
+	const sortedPlayers = [...snapshot.players].sort((a, b) => b.points - a.points);
+
+	const handleReplay = () => {
+		replaySudokuRoom(tree, snapshot.difficulty, snapshot.gameMode);
+		setGamePhase('playing');
+		setVictoryConfetti([]);
+		victoryFiredRef.current = false;
+		prevCellValuesRef.current = [];
+	};
+
+	const handleGoHome = () => {
+		window.location.href = window.location.origin + window.location.pathname;
+	};
+
 	return (
 		<div
 			className="min-h-screen"
@@ -428,17 +733,149 @@ export function StarterApp() {
 				color: P.text,
 			}}
 		>
-			<div className="mx-auto max-w-5xl px-5 pt-6 pb-20 flex flex-col gap-5">
+			{/* Victory overlay */}
+			{gamePhase === 'complete' && (
+				<div
+					className="fixed inset-0 flex flex-col items-center justify-center z-50"
+					style={{
+						background: 'rgba(245,240,232,0.92)',
+						backdropFilter: 'blur(28px) saturate(1.5)',
+					}}
+				>
+					{/* Full-screen confetti rain */}
+					{victoryConfetti.map((p) => (
+						<span
+							key={p.id}
+							className="victory-confetti"
+							style={{
+								left: `${p.left}vw`,
+								width: p.width,
+								height: p.height,
+								borderRadius: p.radius,
+								background: p.color,
+								border: p.borderColor ? `1.5px solid ${p.borderColor}` : undefined,
+								animationDuration: `${p.duration}ms`,
+								animationDelay: `${p.delay}ms`,
+								['--drift' as string]: `${p.drift}px`,
+								['--spin' as string]: `${p.spin}deg`,
+							}}
+						/>
+					))}
 
-				{/* Header */}
-				<header className="flex items-start justify-between gap-4">
+					{/* Victory card */}
+					<div
+						className="relative z-10 flex flex-col items-center gap-6 rounded-3xl px-12 py-10 text-center"
+						style={{
+							background: 'rgba(255,252,247,0.80)',
+							backdropFilter: 'blur(20px)',
+							border: '1px solid rgba(220,210,195,0.5)',
+							boxShadow: '0 24px 80px rgba(0,0,0,0.10)',
+							maxWidth: 440,
+							width: '90vw',
+						}}
+					>
+						<div className="text-5xl">🎉</div>
+						<div>
+							<h1
+								className="text-3xl font-bold tracking-tight mb-1"
+								style={{ color: P.text, letterSpacing: '-0.03em' }}
+							>
+								Congratulations!
+							</h1>
+							<p className="text-[14px]" style={{ color: P.text3 }}>
+								Puzzle solved
+								{snapshot.gameStartedAt ? ` in ${elapsedDisplay}` : ''}
+							</p>
+						</div>
+
+						{/* Scoreboard */}
+						{sortedPlayers.length > 0 && (
+							<div className="w-full">
+								<div
+									className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2 text-left"
+									style={{ color: P.text3 }}
+								>
+									Final Score
+								</div>
+								<ul className="space-y-1 w-full">
+									{sortedPlayers.map((player, rank) => {
+										const origIdx = snapshot.players.findIndex((p) => p.id === player.id);
+										const color = pc(origIdx >= 0 ? origIdx : rank);
+										const isMe = player.id === me.id;
+										return (
+											<li
+												key={player.id}
+												className="flex items-center justify-between rounded-2xl px-3.5 py-2.5"
+												style={{
+													background: rank === 0 ? 'rgba(240,179,64,0.10)' : 'rgba(0,0,0,0.03)',
+													border: rank === 0 ? '1px solid rgba(240,179,64,0.22)' : '1px solid transparent',
+												}}
+											>
+												<div className="flex items-center gap-2.5">
+													<span className="text-[13px] w-4 text-center" style={{ color: P.text3 }}>
+														{rank === 0 ? '🥇' : rank === 1 ? '🥈' : rank === 2 ? '🥉' : `${rank + 1}`}
+													</span>
+													<span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+													<span className="text-[13px] font-medium" style={{ color: P.text }}>
+														{player.name}
+														{isMe && <span className="ml-1 text-[11px] font-normal" style={{ color: P.text3 }}>you</span>}
+													</span>
+												</div>
+												<span className="text-[13px] font-semibold tabular-nums" style={{ color }}>
+													{player.points >= 0 ? '+' : ''}{player.points}
+												</span>
+											</li>
+										);
+									})}
+								</ul>
+							</div>
+						)}
+
+						{/* Buttons */}
+						<div className="flex gap-3 w-full">
+							<button
+								type="button"
+								onClick={handleGoHome}
+								className="flex-1 rounded-2xl px-4 py-2.5 text-[13px] font-semibold transition-all duration-150"
+								style={{
+									background: 'transparent',
+									border: `1.5px solid ${P.accentBorder}`,
+									color: P.text2,
+								}}
+							>
+								Go Home
+							</button>
+							<button
+								type="button"
+								onClick={handleReplay}
+								className="flex-1 rounded-2xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-150"
+								style={{
+									background: `linear-gradient(135deg, ${P.accent}, #a08665)`,
+									boxShadow: `0 2px 12px rgba(139,115,85,0.3)`,
+								}}
+							>
+								Play Again ↻
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
+			{/* Header bar — fixed to top, full-width */}
+				<header
+					className="sticky top-0 z-30 flex items-center justify-between gap-4 px-6 py-3.5"
+					style={{
+						background: 'rgba(245,240,232,0.88)',
+						backdropFilter: 'blur(20px) saturate(1.4)',
+						borderBottom: `1px solid ${P.glassBorder}`,
+					}}
+				>
 					<div>
-						<h1 className="text-base font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
-							{isCo ? "CoSudoku" : "Collaborative Sudoku"}
+						<h1 className="text-[15px] font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
+							{isCo ? "Classic Co-Sudoku" : "Collaborative Sudoku"}
 						</h1>
-						<p className="mt-0.5 text-[12px] font-medium" style={{ color: P.text3 }}>
+						<p className="mt-0.5 text-[11px] font-medium" style={{ color: P.text3 }}>
 							{snapshot.difficulty.toUpperCase()} · {users.length} online
-							{isCo ? " · simultaneous" : ""}
 						</p>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
@@ -477,8 +914,10 @@ export function StarterApp() {
 					</div>
 				</header>
 
-				{/* Main layout: board + unified sidebar */}
-				<div className="grid gap-5 lg:grid-cols-[1fr_220px] items-start">
+				<div className="mx-auto max-w-5xl px-5 pt-6 pb-20 flex flex-col gap-5">
+
+					{/* Main layout: board + unified sidebar */}
+					<div className="grid gap-5 lg:grid-cols-[1fr_220px] items-start">
 
 					{/* Board column */}
 					<form onSubmit={handleSubmit}>
@@ -519,15 +958,23 @@ export function StarterApp() {
 										let textColor: string;
 										let fontWeight = 500;
 										let outline = "";
+										const isCelebrating = confettiCells.has(index);
+										const isWrong = wrongCell?.index === index;
+										const solverColorIdx = cell.solvedBy ? (playerIndexMap.get(cell.solvedBy) ?? -1) : -1;
+										const solverColor = solverColorIdx >= 0 ? pc(solverColorIdx) : null;
+										// Use wrongCell value as display override during fade animation
+										const effectiveDisplayValue = isWrong ? wrongCell!.value : displayValue;
+										const isActive = highlightOrigin !== null;
 										if (isSelected)                    { bg = myColor;    textColor = "#fff"; fontWeight = 700; }
 										else if (lockedByOther)            { bg = `${lockerColor}15`; textColor = lockerColor; fontWeight = 600; outline = `2px solid ${lockerColor}40`; }
 										else if (lockedByMe)               { bg = `${myColor}15`; textColor = myColor; fontWeight = 600; outline = `2px solid ${myColor}40`; }
-										else if (isHighlightOriginCell)    { bg = "#ede8e0"; textColor = P.text; fontWeight = 700; }
-										else if (isNumberMatch)            { bg = "#f2ede6"; textColor = P.text; fontWeight = 700; }
-										else if (isRowColHighlight)        { bg = "#f7f3ee"; textColor = cell.fixed ? P.text2 : cell.value !== 0 ? P.text : "rgba(0,0,0,0.08)"; fontWeight = cell.fixed || cell.value !== 0 ? 500 : 400; }
-										else if (cell.fixed)               { bg = P.cellFixed; textColor = P.text2; fontWeight = 600; }
+										else if (isHighlightOriginCell)    { bg = "#ddd6c8"; textColor = P.text; fontWeight = 800; }
+										else if (isNumberMatch)            { bg = "#e8e0d2"; textColor = P.text; fontWeight = 700; }
+										else if (isRowColHighlight)        { bg = "#f5f1eb"; textColor = cell.fixed ? "#9e8f7c" : cell.value !== 0 ? (solverColor ?? "#7a6b58") : "rgba(0,0,0,0.10)"; fontWeight = 500; }
+										else if (cell.fixed)               { bg = P.cellFixed; textColor = "#9e8f7c"; fontWeight = 600; }
 										else if (pendingValue !== null)     { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
-										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = P.text; fontWeight = 600; }
+										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = solverColor ?? "#7a6b58"; fontWeight = 500; }
+										else if (isWrong)                  { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
 										else                               { bg = P.cellEmpty; textColor = "rgba(0,0,0,0.08)"; }
 
 										return (
@@ -535,12 +982,14 @@ export function StarterApp() {
 												key={index}
 												type="button"
 												data-testid={`cell-${index}`}
+												data-cell-index={index}
 												data-fixed={cell.fixed ? "true" : "false"}
 												onClick={() => handleCellClick(index)}
-												className="aspect-square flex items-center justify-center transition-colors duration-100 relative"
+												className={`aspect-square flex items-center justify-center relative${isWrong ? " cell-wrong" : ""}`}
 												style={{
 													background: bg,
 													color: textColor,
+													transition: "background 100ms ease, color 500ms ease-out",
 													borderRight: borderR,
 													borderBottom: borderB,
 													fontSize: "clamp(14px, 2.4vw, 20px)",
@@ -550,9 +999,33 @@ export function StarterApp() {
 													letterSpacing: "-0.01em",
 													outline,
 													outlineOffset: "-2px",
+													overflow: "hidden",
 												}}
 											>
-												{displayValue ?? ""}
+												<span className={isCelebrating ? "cell-celebrate-number" : isWrong ? "cell-wrong-number" : undefined}>
+													{effectiveDisplayValue ?? ""}
+												</span>
+												{/* Confetti particles */}
+												{isCelebrating && confettiCells.get(index)!.map((p) => (
+													<span
+														key={p.id}
+														className="confetti-particle"
+														style={{
+															left: `${p.left}%`,
+															top: `${p.top}%`,
+															width: p.width,
+															height: p.height,
+															borderRadius: p.radius,
+															background: p.color,
+															border: p.borderColor ? `1.5px solid ${p.borderColor}` : undefined,
+															animationDuration: `${p.duration}ms`,
+															animationDelay: `${p.delay}ms`,
+															['--dx' as string]: `${p.dx}px`,
+															['--dy' as string]: `${p.dy}px`,
+															['--spin' as string]: `${p.spin}deg`,
+														}}
+													/>
+												))}
 												{lockedByOther && !displayValue && (
 													<span
 														className="absolute bottom-0.5 right-0.5 w-1.5 h-1.5 rounded-full"
@@ -591,7 +1064,7 @@ export function StarterApp() {
 									}}
 								>
 									Submit
-									<span className="ml-1.5 text-[10px] font-normal opacity-70">⌘↵</span>
+									<span className="ml-1.5 text-[10px] font-normal opacity-70">↵</span>
 								</button>
 								{!isCo && (
 									<button
@@ -605,9 +1078,6 @@ export function StarterApp() {
 									</button>
 								)}
 							</div>
-							<p className="mt-2 text-[11px] text-right" style={{ color: P.text3 }}>
-								Correct +1 · Incorrect −1{!isCo ? " · Pass 0" : ""}
-							</p>
 						</div>
 					</form>
 
@@ -618,6 +1088,7 @@ export function StarterApp() {
 					>
 						{/* Turn / mode indicator */}
 						{isCo ? (
+							<>
 							<div
 								className="rounded-2xl px-4 py-3"
 								style={{
@@ -641,13 +1112,25 @@ export function StarterApp() {
 										</li>
 									))}
 								</ol>
-								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mt-2.5 mb-1.5" style={{ color: P.text3 }}>
+							</div>
+							<div
+								className="rounded-2xl px-4 py-3"
+								style={{
+									background: "rgba(0,0,0,0.02)",
+									border: `1px solid rgba(0,0,0,0.04)`,
+								}}
+							>
+								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-1.5" style={{ color: P.text3 }}>
 									How To Win
 								</p>
 								<p className="text-[11px] leading-relaxed" style={{ color: P.text2 }}>
 									We win together — pick up points (and friends) along the way.
 								</p>
+								<p className="text-[11px] mt-1.5" style={{ color: P.text3 }}>
+									Correct +1 · Incorrect −1
+								</p>
 							</div>
+							</>
 						) : (
 							<div
 								className="rounded-2xl px-4 py-3"
