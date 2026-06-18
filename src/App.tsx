@@ -10,11 +10,11 @@ import {
 	lockSudokuCell,
 	unlockSudokuCell,
 	submitCoSudokuMove,
-	claimAdminRole,
 	isNameTaken,
-	removeDisconnectedPlayers,
 	replaySudokuRoom,
 	devCompletePuzzle,
+	setTurnTimerPaused,
+	leaveSudokuRoom,
 } from "./infra/sharedTreeClient.js";
 import { usePresenceUsers, useCellPresence } from "./infra/presenceClient.js";
 import type { AppModel } from "./schema/starterSchema.js";
@@ -372,7 +372,7 @@ function NamePickerOverlay({
 // ─── Main App ──────────────────────────────────────────────────────────────
 
 export function StarterApp() {
-	const { tree, presence, me } = useFluidRuntime();
+	const { tree, presence, me, audience } = useFluidRuntime();
 	const root = tree.root as AppModel;
 	const snapshot = useSharedTreeState(
 		root,
@@ -384,7 +384,21 @@ export function StarterApp() {
 
 	// ── ALL hooks must come before any early return ────────────────────────
 
-	const [displayName, setDisplayName] = React.useState<string | null>(null);
+	const [displayName, setDisplayNameState] = React.useState<string | null>(() => {
+		try {
+			return sessionStorage.getItem("sudoku.displayName");
+		} catch {
+			return null;
+		}
+	});
+	const setDisplayName = React.useCallback((name: string) => {
+		try {
+			sessionStorage.setItem("sudoku.displayName", name);
+		} catch {
+			/* ignore storage errors */
+		}
+		setDisplayNameState(name);
+	}, []);
 	const [selectedCellIndex, setSelectedCellIndex] = React.useState<number | null>(null);
 	const [pendingMove, setPendingMove] = React.useState<{ cellIndex: number; value: number } | null>(null);
 	const [copied, setCopied] = React.useState(false);
@@ -539,6 +553,36 @@ export function StarterApp() {
 		}
 	}, [isMyTurn, isCo]);
 
+	// Turn countdown timer for classic mode
+	const turnSeconds = 60;
+	const [turnTimeLeft, setTurnTimeLeft] = React.useState<number | null>(null);
+	React.useEffect(() => {
+		if (isCo || !snapshot.currentTurnPlayerId || !snapshot.turnTimerStarted) {
+			setTurnTimeLeft(null);
+			return;
+		}
+		setTurnTimeLeft(turnSeconds);
+		const interval = setInterval(() => {
+			if (snapshot.timerPaused) return;
+			setTurnTimeLeft(prev => {
+				if (prev === null || prev <= 1) {
+					clearInterval(interval);
+					return 0;
+				}
+				return prev - 1;
+			});
+		}, 1000);
+		return () => clearInterval(interval);
+	}, [snapshot.currentTurnPlayerId, snapshot.turnTimerStarted, isCo, turnSeconds]);
+
+	// Auto-pass when countdown hits 0 and it's my turn
+	React.useEffect(() => {
+		if (!isCo && isMyTurn && turnTimeLeft === 0) {
+			handlePass();
+		}
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [turnTimeLeft]);
+
 	React.useEffect(() => {
 		const onKey = (e: KeyboardEvent) => {
 			// Enter submits the staged move from anywhere
@@ -611,31 +655,78 @@ export function StarterApp() {
 		return () => document.removeEventListener("mousedown", onDocClick);
 	}, []);
 
-	// Admin succession: when admin leaves, first remaining player in join order claims the role
-	React.useEffect(() => {
-		if (!displayName) return;
-		const adminId = snapshot.roomAdminId;
-		if (!adminId) return;
-		if (adminId === me.id) return; // I'm already admin
-		const connectedIds = new Set(users.map((u) => u.value.id));
-		connectedIds.add(me.id); // presence only returns remotes; always include self
-		const adminPresent = connectedIds.has(adminId);
-		if (adminPresent) return;
-		// Admin is gone — am I the first in join order among connected players?
-		const firstPresent = snapshot.players.find((p) => connectedIds.has(p.id));
-		if (firstPresent?.id === me.id) {
-			claimAdminRole(tree, me.id, displayName);
-		}
-	}, [users, snapshot.roomAdminId, snapshot.players, me.id, displayName, tree]);
+	// ── Room liveness ─────────────────────────────────────────────────────
+	// The Fluid relay audience is the source of truth for who is connected. It
+	// hands us the member (keyed by the player's id, because the connection token
+	// uses that id) directly on join/leave, so we can react instantly and reliably.
+	// A short grace window absorbs reloads/network blips (a reconnect with the same
+	// id cancels the pending leave). The always-on admin removes departed non-admins;
+	// non-admins surface a "host left" notice if the admin disappears. The admin
+	// role is never reassigned.
+	const [adminLeft, setAdminLeft] = React.useState(false);
 
-	// Stale player cleanup: any client removes disconnected players (concurrent ops are safe)
+	// Leave cleanly on tab close / refresh so non-admin departures feel instant.
+	const amInQueueRef = React.useRef(false);
+	amInQueueRef.current = amInQueue;
+	React.useEffect(() => {
+		const onUnload = () => {
+			if (amInQueueRef.current) leaveSudokuRoom(tree, me.id);
+		};
+		window.addEventListener("pagehide", onUnload);
+		return () => window.removeEventListener("pagehide", onUnload);
+	}, [tree, me.id]);
+
+	// Refs keep the audience listeners stable while reading the latest role state.
+	const isAdminRef = React.useRef(isAdmin);
+	isAdminRef.current = isAdmin;
+	const adminIdRef = React.useRef(snapshot.roomAdminId);
+	adminIdRef.current = snapshot.roomAdminId;
 	React.useEffect(() => {
 		if (!displayName) return;
-		const connectedIds = new Set(users.map((u) => u.value.id));
-		connectedIds.add(me.id); // presence only returns remotes; always include self
-		const hasStale = snapshot.players.some((p) => !connectedIds.has(p.id));
-		if (hasStale) removeDisconnectedPlayers(tree, connectedIds);
-	}, [users, snapshot.players, me.id, displayName, tree]);
+		const GRACE_MS = 5000;
+		const pending = new Map<string, number>();
+
+		const resolveGone = (id: string) => {
+			pending.delete(id);
+			// Reconnected during the grace window (e.g. a refresh) — ignore.
+			if (audience.getMembers().has(id)) return;
+			console.debug("[liveness] member gone:", id, "admin?", id === adminIdRef.current);
+			if (id === adminIdRef.current) {
+				if (!isAdminRef.current) setAdminLeft(true);
+			} else if (isAdminRef.current) {
+				leaveSudokuRoom(tree, id);
+			}
+		};
+
+		const onRemoved = (_clientId: string, member: { id: string }) => {
+			const id = member.id;
+			console.debug("[liveness] memberRemoved:", id);
+			// Another connection for this id is still live — not actually gone.
+			if (audience.getMembers().has(id)) return;
+			if (pending.has(id)) return;
+			pending.set(id, window.setTimeout(() => resolveGone(id), GRACE_MS));
+		};
+
+		const onAdded = (_clientId: string, member: { id: string }) => {
+			const id = member.id;
+			console.debug("[liveness] memberAdded:", id);
+			const timer = pending.get(id);
+			if (timer !== undefined) {
+				window.clearTimeout(timer);
+				pending.delete(id);
+			}
+			if (id === adminIdRef.current && !isAdminRef.current) setAdminLeft(false);
+		};
+
+		audience.on("memberRemoved", onRemoved);
+		audience.on("memberAdded", onAdded);
+		return () => {
+			audience.off("memberRemoved", onRemoved);
+			audience.off("memberAdded", onAdded);
+			pending.forEach((t) => window.clearTimeout(t));
+			pending.clear();
+		};
+	}, [audience, tree, displayName, me.id]);
 
 	// ── Early return for name picker (after all hooks) ─────────────────────
 
@@ -753,6 +844,7 @@ export function StarterApp() {
 	};
 
 	const handleGoHome = () => {
+		if (amInQueueRef.current) leaveSudokuRoom(tree, me.id);
 		window.location.href = window.location.origin + window.location.pathname;
 	};
 
@@ -889,6 +981,53 @@ export function StarterApp() {
 								Play Again ↻
 							</button>
 						</div>
+					</div>
+				</div>
+			)}
+
+			{/* Host-left overlay — admin (room host) disappeared; everyone returns home */}
+			{adminLeft && gamePhase !== 'complete' && (
+				<div
+					className="fixed inset-0 flex flex-col items-center justify-center z-50 px-6"
+					style={{
+						background: 'rgba(245,240,232,0.92)',
+						backdropFilter: 'blur(28px) saturate(1.5)',
+					}}
+				>
+					<div
+						className="relative z-10 flex flex-col items-center gap-5 rounded-3xl px-12 py-10 text-center"
+						style={{
+							background: 'rgba(255,252,247,0.80)',
+							backdropFilter: 'blur(20px)',
+							border: '1px solid rgba(220,210,195,0.5)',
+							boxShadow: '0 24px 80px rgba(0,0,0,0.10)',
+							maxWidth: 440,
+							width: '90vw',
+						}}
+					>
+						<div className="text-5xl">👋</div>
+						<div>
+							<h1
+								className="text-2xl font-bold tracking-tight mb-1"
+								style={{ color: P.text, letterSpacing: '-0.03em' }}
+							>
+								The host left the room
+							</h1>
+							<p className="text-[14px]" style={{ color: P.text3 }}>
+								This room has ended. Head back home to start or join a new game.
+							</p>
+						</div>
+						<button
+							type="button"
+							onClick={handleGoHome}
+							className="w-full rounded-2xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-150"
+							style={{
+								background: `linear-gradient(135deg, ${P.accent}, #a08665)`,
+								boxShadow: `0 2px 12px rgba(139,115,85,0.3)`,
+							}}
+						>
+							Return Home
+						</button>
 					</div>
 				</div>
 			)}
@@ -1173,84 +1312,77 @@ export function StarterApp() {
 					</div>{/* close max-w wrapper */}
 				</form>
 
-				{/* ── Unified sidebar ──────────── */}
-				<aside
-					className="rounded-3xl p-5 self-start flex flex-col gap-4 shrink-0 w-[220px]"
-					style={glassBoldCard}
-				>
+				{/* Right column: sidebar + admin tools stacked */}
+				<div className="flex flex-col gap-6 shrink-0">
+
+					{/* ── Unified sidebar ──────────── */}
+					<aside
+						className="rounded-3xl p-6 flex flex-col gap-5 w-[260px]"
+						style={glassBoldCard}
+					>
 						{/* Turn / mode indicator */}
 						{isCo ? (
 							<>
 							<div
-								className="rounded-2xl px-4 py-3"
-								style={{
-									background: "rgba(0,0,0,0.02)",
-									border: `1px solid rgba(0,0,0,0.04)`,
-								}}
+								className="rounded-2xl px-4 py-4"
+								style={{ background: "rgba(0,0,0,0.02)", border: `1px solid rgba(0,0,0,0.04)` }}
 							>
-								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-1.5" style={{ color: P.text3 }}>
+								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2" style={{ color: P.text3 }}>
 									How To Play
 								</p>
-								<ol className="flex flex-col gap-1 mt-0.5">
+								<ol className="flex flex-col gap-2 mt-1">
 									{["Click to lock a cell", "Type your number", "Submit"].map((step, i) => (
 										<li key={i} className="flex items-center gap-2">
-											<span
-												className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
-												style={{ background: "rgba(139,115,85,0.10)", color: P.text3 }}
-											>
-												{i + 1}
-											</span>
+											<span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0" style={{ background: "rgba(139,115,85,0.10)", color: P.text3 }}>{i + 1}</span>
 											<span className="text-[11px]" style={{ color: P.text2 }}>{step}</span>
 										</li>
 									))}
 								</ol>
 							</div>
 							<div
-								className="rounded-2xl px-4 py-3"
-								style={{
-									background: "rgba(0,0,0,0.02)",
-									border: `1px solid rgba(0,0,0,0.04)`,
-								}}
+								className="rounded-2xl px-4 py-4"
+								style={{ background: "rgba(0,0,0,0.02)", border: `1px solid rgba(0,0,0,0.04)` }}
 							>
-								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-1.5" style={{ color: P.text3 }}>
+								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2" style={{ color: P.text3 }}>
 									How To Win
 								</p>
 								<p className="text-[11px] leading-relaxed" style={{ color: P.text2 }}>
 									We win together — pick up points (and friends) along the way.
 								</p>
-								<p className="text-[11px] mt-1.5" style={{ color: P.text3 }}>
-									Correct +1 · Incorrect −1
-								</p>
+								<p className="text-[11px] mt-1.5" style={{ color: P.text3 }}>Correct +1 · Incorrect −1</p>
 							</div>
 							</>
 						) : (
+							<>
 							<div
-								className="rounded-2xl px-4 py-3"
-								style={{
-									background: isMyTurn ? P.accentSoft : "rgba(0,0,0,0.02)",
-									border: isMyTurn ? `1.5px solid ${P.accentBorder}` : `1px solid rgba(0,0,0,0.04)`,
-								}}
+								className="rounded-2xl px-4 py-4"
+								style={{ background: "rgba(0,0,0,0.02)", border: `1px solid rgba(0,0,0,0.04)` }}
 							>
-								<div className="flex items-center gap-2">
-									<span
-										className="w-2 h-2 rounded-full shrink-0"
-										style={{
-											background: isMyTurn ? P.accent : (activeColor ?? P.text3),
-											boxShadow: isMyTurn ? `0 0 6px ${P.accentBorder}` : "none",
-										}}
-									/>
-									<span
-										className="text-[13px] font-semibold"
-										style={{ color: isMyTurn ? P.accent : P.text2 }}
-									>
-										{isMyTurn
-											? "Your turn"
-											: snapshot.players.length === 0
-												? "Waiting…"
-												: `${activePlayer?.name ?? "…"}'s turn`}
-									</span>
-								</div>
+								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2" style={{ color: P.text3 }}>
+									How To Play
+								</p>
+								<ol className="flex flex-col gap-2 mt-1">
+									{["Wait for your turn", "Click a cell, type a number", "Submit before time runs out"].map((step, i) => (
+										<li key={i} className="flex items-center gap-2">
+											<span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0" style={{ background: "rgba(139,115,85,0.10)", color: P.text3 }}>{i + 1}</span>
+											<span className="text-[11px]" style={{ color: P.text2 }}>{step}</span>
+										</li>
+									))}
+								</ol>
 							</div>
+							<div
+								className="rounded-2xl px-4 py-4"
+								style={{ background: "rgba(0,0,0,0.02)", border: `1px solid rgba(0,0,0,0.04)` }}
+							>
+								<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2" style={{ color: P.text3 }}>
+									How To Win
+								</p>
+								<p className="text-[11px] leading-relaxed" style={{ color: P.text2 }}>
+									Take turns filling the board. Most points when the puzzle is solved wins.
+								</p>
+								<p className="text-[11px] mt-1.5" style={{ color: P.text3 }}>Correct +1 · Incorrect −1 · 60s per turn</p>
+							</div>
+							</>
 						)}
 
 						{/* Divider */}
@@ -1259,7 +1391,7 @@ export function StarterApp() {
 						{/* Scoreboard */}
 						<div>
 							<h2
-								className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2.5"
+								className="text-[10px] font-bold uppercase tracking-[0.12em] mb-3"
 								style={{ color: P.text3 }}
 							>
 								Scoreboard
@@ -1267,41 +1399,71 @@ export function StarterApp() {
 							{snapshot.players.length === 0 ? (
 								<p className="text-[12px]" style={{ color: P.text3 }}>No players yet.</p>
 							) : (
-								<ul className="space-y-0.5">
+								<ul className="space-y-1 pl-4">
 									{snapshot.players.map((player, index) => {
 										const color = pc(index);
 										const isActive = !isCo && player.id === snapshot.currentTurnPlayerId;
 										const isMe = player.id === me.id;
 										const isPlayerAdmin = player.id === snapshot.roomAdminId;
 										return (
-											<li
-												key={player.id}
-												className="flex items-center justify-between rounded-xl px-2.5 py-2 transition-colors duration-200"
-												style={{ background: isActive ? P.accentSoft : "transparent" }}
-											>
+											<li key={player.id} className="relative">
+												{/* Turn caret — outside the card, pointing right */}
+												<span
+													className="absolute -left-3.5 top-1/2 -translate-y-1/2 text-[8px] transition-opacity duration-200"
+													style={{ color: P.accent, opacity: isActive ? 1 : 0 }}
+												>
+													▶
+												</span>
+												<div
+													className="flex items-center justify-between rounded-xl px-3 py-3 transition-colors duration-200"
+													style={{ background: isActive ? P.accentSoft : "transparent" }}
+												>
 												<div className="flex items-center gap-2 min-w-0">
 													<span
-														className="w-2 h-2 rounded-full shrink-0"
+														className="w-2 h-2 rounded-full shrink-0 mt-0.5"
 														style={{ background: color, boxShadow: `0 0 6px ${color}40` }}
 													/>
-													<span
-														className="text-[13px] truncate"
-														style={{
-															color: isCo ? color : isActive ? P.accent : P.text2,
-															fontWeight: isCo ? 500 : isActive ? 600 : 400,
-														}}
-													>
-														{player.name}
-														{isMe && (
-															<span className="ml-1 text-[11px] font-normal" style={{ color: P.text3 }}>you</span>
-														)}
-													</span>
-													{isPlayerAdmin && (
-														<span className="text-[10px] shrink-0" title="Room admin" style={{ color: P.text3 }}>👑</span>
-													)}
-													{isActive && (
-														<span className="text-[8px] shrink-0" style={{ color: P.accent }}>▶</span>
-													)}
+													<div className="flex flex-col min-w-0">
+														<span
+															className="text-[13px] leading-snug truncate"
+															style={{
+																color: isCo ? color : isActive ? P.accent : P.text2,
+																fontWeight: isMe ? 600 : isCo ? 500 : isActive ? 600 : 400,
+															}}
+														>
+															{player.name}
+														</span>
+														{/* Subtext badges */}
+														<div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+															{isMe && (
+																<span
+																	className="text-[9px] font-semibold rounded px-1 py-0.5 leading-none"
+																	style={{ color: P.text3 }}
+																>
+																	you
+																</span>
+															)}
+															{isPlayerAdmin && (
+																<span
+																	className="text-[9px] font-semibold rounded px-1 py-0.5 leading-none"
+																	style={{ background: "rgba(0,0,0,0.06)", color: P.text3 }}
+																>
+																	admin
+																</span>
+															)}
+															{isActive && !isCo && turnTimeLeft !== null && (
+																<span
+																	className="text-[9px] font-semibold tabular-nums rounded px-1 py-0.5 leading-none"
+																	style={{
+																		color: turnTimeLeft <= 10 ? "#d97706" : P.accent,
+																		background: turnTimeLeft <= 10 ? "rgba(217,119,6,0.10)" : P.accentSoft,
+																	}}
+																>
+																	{turnTimeLeft}s
+																</span>
+															)}
+														</div>
+													</div>
 												</div>
 												<div className="flex items-center gap-1 ml-1 shrink-0">
 													<span className="text-[12px] font-semibold tabular-nums" style={{ color }}>
@@ -1319,14 +1481,42 @@ export function StarterApp() {
 														</button>
 													)}
 												</div>
+												</div>
 											</li>
 										);
 									})}
 								</ul>
 							)}
 						</div>
+
 					</aside>
-				</div>
+
+					{/* Admin Tools — tile below sidebar */}
+					{!isCo && isAdmin && (
+						<div
+							className="rounded-2xl px-4 py-3 w-[260px]"
+							style={{ background: "rgba(0,0,0,0.03)", border: `1px solid rgba(0,0,0,0.05)` }}
+						>
+							<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2" style={{ color: P.text3 }}>
+								Admin Tools
+							</p>
+							{snapshot.turnTimerStarted ? (
+								<button
+									type="button"
+									onClick={() => setTurnTimerPaused(tree, me.id, !snapshot.timerPaused)}
+									className="flex items-center gap-1.5 text-[12px] font-medium transition-opacity hover:opacity-70 w-fit"
+									style={{ color: P.text2, background: "none", border: "none", padding: 0, cursor: "pointer" }}
+								>
+									<span>{snapshot.timerPaused ? "▶" : "⏸"}</span>
+									<span>{snapshot.timerPaused ? "Resume timer" : "Pause timer"}</span>
+								</button>
+							) : (
+								<p className="text-[11px]" style={{ color: P.text3 }}>Timer starts on first submission.</p>
+							)}
+						</div>
+					)}
+				</div>{/* close right column */}
+			</div>{/* close main flex row */}
 			</div>
 
 			<div

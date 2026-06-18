@@ -56,6 +56,8 @@ export class AppModel extends sf.object("AppModel", {
 	roomAdminName: sf.optional(sf.string),
 	gameMode: sf.optional(sf.string),
 	gameStartedAt: sf.optional(sf.number),
+	turnTimerStarted: sf.optional(sf.boolean),
+	timerPaused: sf.optional(sf.boolean),
 }) {}
 
 export const starterTreeConfiguration = new TreeViewConfiguration({ schema: AppModel });

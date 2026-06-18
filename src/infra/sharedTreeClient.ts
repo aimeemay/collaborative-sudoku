@@ -1,4 +1,4 @@
-import { AzureClient } from "@fluidframework/azure-client";
+import { AzureClient, IAzureAudience } from "@fluidframework/azure-client";
 import { IFluidContainer, Tree } from "fluid-framework";
 import { loadFluidData } from "./fluid.js";
 import { containerSchema } from "../schema/containerSchema.js";
@@ -22,6 +22,7 @@ import { generateSudoku, SudokuDifficulty } from "../utils/sudokuGenerator.js";
 export type StarterContainerAssets = {
 	container: IFluidContainer<typeof containerSchema>;
 	tree: StarterTreeView;
+	audience: IAzureAudience;
 };
 
 export async function loadStarterContainer(props: {
@@ -29,14 +30,14 @@ export async function loadStarterContainer(props: {
 	containerId: string;
 }): Promise<StarterContainerAssets> {
 	const { client, containerId } = props;
-	const { container } = await loadFluidData(containerId, containerSchema, client);
+	const { container, services } = await loadFluidData(containerId, containerSchema, client);
 
 	const tree = container.initialObjects.appData.viewWith(starterTreeConfiguration);
 	if (tree.compatibility.canInitialize) {
 		tree.initialize(getDefaultStarterContent());
 	}
 
-	return { container, tree };
+	return { container, tree, audience: services.audience };
 }
 
 export function addItem(tree: StarterTreeView, text: string, author?: string): void {
@@ -309,6 +310,8 @@ export type SudokuSnapshot = {
 	roomAdminName?: string;
 	gameMode: "classic" | "cosudoku";
 	gameStartedAt?: number;
+	turnTimerStarted: boolean;
+	timerPaused: boolean;
 };
 
 export type SubmitSudokuMoveResult = {
@@ -340,6 +343,8 @@ export function getSudokuSnapshot(tree: StarterTreeView): SudokuSnapshot {
 		roomAdminName: root.roomAdminName,
 		gameMode: root.gameMode === "cosudoku" ? "cosudoku" : "classic",
 		gameStartedAt: root.gameStartedAt,
+		turnTimerStarted: root.turnTimerStarted === true,
+		timerPaused: root.timerPaused === true,
 	};
 }
 
@@ -516,6 +521,7 @@ export function submitSudokuMoveAndPassTurn(
 				}
 			}
 			root.lastValidationMessage = validation.message;
+			if (!root.turnTimerStarted) root.turnTimerStarted = true;
 			const nextPlayerId = passTurn(root, move.playerId);
 			result = {
 				committed: false,
@@ -546,6 +552,7 @@ export function submitSudokuMoveAndPassTurn(
 			);
 		}
 
+		if (!root.turnTimerStarted) root.turnTimerStarted = true;
 		root.lastValidationMessage = "Move accepted and committed.";
 		const nextPlayerId = passTurn(root, move.playerId);
 		result = {
@@ -558,42 +565,48 @@ export function submitSudokuMoveAndPassTurn(
 	return result;
 }
 
-export function removeDisconnectedPlayers(tree: StarterTreeView, connectedIds: Set<string>): void {
-	const root = requireRoot(tree);
-	Tree.runTransaction(root, () => {
-		// Walk backwards so removeAt indices stay valid
-		for (let i = root.sudokuPlayers.length - 1; i >= 0; i--) {
-			const p = root.sudokuPlayers[i];
-			if (!connectedIds.has(p.id)) {
-				// Unlock any cells held by this player
-				for (let j = 0; j < root.sudokuCells.length; j++) {
-					const cell = root.sudokuCells[j];
-					if (cell.lockedBy === p.id) {
-						root.sudokuCells.removeAt(j);
-						root.sudokuCells.insertAt(j, new SudokuCell({ value: cell.value, fixed: cell.fixed }));
-					}
-				}
-				root.sudokuPlayers.removeAt(i);
-				if (root.currentTurnPlayerId === p.id) {
-					root.currentTurnPlayerId = root.sudokuPlayers.length > 0
-						? root.sudokuPlayers[Math.min(i, root.sudokuPlayers.length - 1)].id
-						: undefined;
-				}
-			}
-		}
+/**
+ * Internal: removes a player from the roster, unlocking their cells and advancing
+ * the turn if it was theirs. Does NOT touch the admin role — admin succession is
+ * intentionally not part of this design (the admin is the always-on room host).
+ */
+function removePlayerInternal(root: AppModel, playerId: string): void {
+	const index = root.sudokuPlayers.findIndex((player) => player.id === playerId);
+	if (index === -1) {
+		return;
+	}
 
-		// If the room admin is gone, hand the hat to the first remaining player
-		const adminStillHere =
-			root.roomAdminId && root.sudokuPlayers.some((p) => p.id === root.roomAdminId);
-		if (!adminStillHere) {
-			if (root.sudokuPlayers.length > 0) {
-				root.roomAdminId = root.sudokuPlayers[0].id;
-				root.roomAdminName = root.sudokuPlayers[0].name;
-			} else {
-				root.roomAdminId = undefined;
-				root.roomAdminName = undefined;
-			}
+	// Unlock any cells held by the leaving player
+	for (let j = 0; j < root.sudokuCells.length; j++) {
+		const cell = root.sudokuCells[j];
+		if (cell.lockedBy === playerId) {
+			root.sudokuCells.removeAt(j);
+			root.sudokuCells.insertAt(j, new SudokuCell({ value: cell.value, fixed: cell.fixed }));
 		}
+	}
+
+	root.sudokuPlayers.removeAt(index);
+
+	if (root.currentTurnPlayerId === playerId) {
+		root.currentTurnPlayerId = root.sudokuPlayers.length > 0
+			? root.sudokuPlayers[Math.min(index, root.sudokuPlayers.length - 1)].id
+			: undefined;
+	}
+}
+
+/**
+ * Removes a single non-admin player from their own client (e.g. on "Go Home" or
+ * tab close) so departures feel instant rather than waiting for the audience
+ * disconnect signal. Admins are not removed — by design the admin role is never
+ * passed on.
+ */
+export function leaveSudokuRoom(tree: StarterTreeView, playerId: string): void {
+	const root = requireRoot(tree);
+	if (root.roomAdminId === playerId) {
+		return;
+	}
+	Tree.runTransaction(root, () => {
+		removePlayerInternal(root, playerId);
 	});
 }
 
@@ -925,5 +938,13 @@ export function devCompletePuzzle(tree: StarterTreeView, solvedById: string): vo
 				);
 			}
 		});
+	});
+}
+
+export function setTurnTimerPaused(tree: StarterTreeView, adminId: string, paused: boolean): void {
+	const root = requireRoot(tree);
+	if (root.roomAdminId !== adminId) return;
+	Tree.runTransaction(root, () => {
+		root.timerPaused = paused;
 	});
 }
