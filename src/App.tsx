@@ -861,15 +861,20 @@ export function StarterApp() {
 				</div>
 			)}
 
-			<div className="mx-auto max-w-5xl px-5 pt-6 pb-20 flex flex-col gap-5">
-
-				{/* Header */}
-				<header className="flex items-start justify-between gap-4">
+			{/* Header bar — fixed to top, full-width */}
+				<header
+					className="sticky top-0 z-30 flex items-center justify-between gap-4 px-6 py-3.5"
+					style={{
+						background: 'rgba(245,240,232,0.88)',
+						backdropFilter: 'blur(20px) saturate(1.4)',
+						borderBottom: `1px solid ${P.glassBorder}`,
+					}}
+				>
 					<div>
-						<h1 className="text-base font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
+						<h1 className="text-[15px] font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
 							{isCo ? "Classic Co-Sudoku" : "Collaborative Sudoku"}
 						</h1>
-						<p className="mt-0.5 text-[12px] font-medium" style={{ color: P.text3 }}>
+						<p className="mt-0.5 text-[11px] font-medium" style={{ color: P.text3 }}>
 							{snapshot.difficulty.toUpperCase()} · {users.length} online
 						</p>
 					</div>
@@ -909,8 +914,10 @@ export function StarterApp() {
 					</div>
 				</header>
 
-				{/* Main layout: board + unified sidebar */}
-				<div className="grid gap-5 lg:grid-cols-[1fr_220px] items-start">
+				<div className="mx-auto max-w-5xl px-5 pt-6 pb-20 flex flex-col gap-5">
+
+					{/* Main layout: board + unified sidebar */}
+					<div className="grid gap-5 lg:grid-cols-[1fr_220px] items-start">
 
 					{/* Board column */}
 					<form onSubmit={handleSubmit}>
