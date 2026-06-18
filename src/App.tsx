@@ -867,7 +867,7 @@ export function StarterApp() {
 				<header className="flex items-start justify-between gap-4">
 					<div>
 						<h1 className="text-base font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
-							{isCo ? "CoSudoku" : "Collaborative Sudoku"}
+							{isCo ? "Classic Co-Sudoku" : "Collaborative Sudoku"}
 						</h1>
 						<p className="mt-0.5 text-[12px] font-medium" style={{ color: P.text3 }}>
 							{snapshot.difficulty.toUpperCase()} · {users.length} online
