@@ -964,15 +964,16 @@ export function StarterApp() {
 										const solverColor = solverColorIdx >= 0 ? pc(solverColorIdx) : null;
 										// Use wrongCell value as display override during fade animation
 										const effectiveDisplayValue = isWrong ? wrongCell!.value : displayValue;
+										const isActive = highlightOrigin !== null;
 										if (isSelected)                    { bg = myColor;    textColor = "#fff"; fontWeight = 700; }
 										else if (lockedByOther)            { bg = `${lockerColor}15`; textColor = lockerColor; fontWeight = 600; outline = `2px solid ${lockerColor}40`; }
 										else if (lockedByMe)               { bg = `${myColor}15`; textColor = myColor; fontWeight = 600; outline = `2px solid ${myColor}40`; }
-										else if (isHighlightOriginCell)    { bg = "#ede8e0"; textColor = P.text; fontWeight = 700; }
-										else if (isNumberMatch)            { bg = "#f2ede6"; textColor = P.text; fontWeight = 700; }
-										else if (isRowColHighlight)        { bg = "#f7f3ee"; textColor = cell.fixed ? P.text : cell.value !== 0 ? (solverColor ?? P.text) : "rgba(0,0,0,0.08)"; fontWeight: cell.fixed || cell.value !== 0 ? 600 : 400; }
-										else if (cell.fixed)               { bg = P.cellFixed; textColor = highlightOrigin !== null ? P.text : P.text2; fontWeight = 600; }
+										else if (isHighlightOriginCell)    { bg = "#ddd6c8"; textColor = P.text; fontWeight = 800; }
+										else if (isNumberMatch)            { bg = "#e8e0d2"; textColor = P.text; fontWeight = 700; }
+										else if (isRowColHighlight)        { bg = "#ede8e0"; textColor = cell.fixed ? P.text : cell.value !== 0 ? (solverColor ?? P.text) : "rgba(0,0,0,0.10)"; fontWeight = cell.fixed || cell.value !== 0 ? 600 : 400; }
+										else if (cell.fixed)               { bg = P.cellFixed; textColor = isActive ? "rgba(44,36,24,0.22)" : P.text2; fontWeight = isActive ? 500 : 600; }
 										else if (pendingValue !== null)     { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
-										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = solverColor ?? P.text; fontWeight = 600; }
+										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = isActive ? (solverColor ? `${solverColor}55` : "rgba(44,36,24,0.22)") : (solverColor ?? P.text); fontWeight = isActive ? 500 : 600; }
 										else if (isWrong)                  { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
 										else                               { bg = P.cellEmpty; textColor = "rgba(0,0,0,0.08)"; }
 
