@@ -1,0 +1,55 @@
+name: Update README on PR merge
+
+on:
+    pull_request:
+        types: [closed]
+        branches:
+            - main
+
+jobs:
+    update-readme:
+        if: github.event.pull_request.merged == true
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            issues: write
+            pull-requests: read
+
+        steps:
+            - name: Ensure documentation label exists
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: |
+                  gh label create "documentation" \
+                    --repo "${{ github.repository }}" \
+                    --description "Improvements or additions to docs" \
+                    --color "0075ca" || true
+
+            - name: Create README update task for Copilot
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  PR_TITLE: ${{ github.event.pull_request.title }}
+                  PR_BODY: ${{ github.event.pull_request.body }}
+                  PR_USER: ${{ github.event.pull_request.user.login }}
+                  PR_URL: ${{ github.event.pull_request.html_url }}
+              run: |
+                  ISSUE_BODY="Hey Copilot! 👋 PR #${PR_NUMBER} just merged into \`main\`. Please update \`README.md\` if anything changed that players or contributors would want to know about.
+
+                  **PR title:** ${PR_TITLE}
+                  **Merged by:** @${PR_USER}
+                  **PR link:** ${PR_URL}
+
+                  **What changed:**
+                  ${PR_BODY:-_(no description provided)_}
+
+                  Use the [readme-updater agent instructions](.github/agents/readme-updater.agent.md) to guide your tone and what to update. Keep it playful and minimal ✨
+
+                  If the README doesn't need updating for this PR, just close this issue with a note."
+
+                  gh issue create \
+                    --repo "${{ github.repository }}" \
+                    --title "docs: update README for \"${PR_TITLE}\" ✨" \
+                    --body "$ISSUE_BODY" \
+                    --assignee "copilot" \
+                    --label "documentation"
