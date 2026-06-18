@@ -962,8 +962,8 @@ export function StarterApp() {
 										else if (lockedByMe)               { bg = `${myColor}15`; textColor = myColor; fontWeight = 600; outline = `2px solid ${myColor}40`; }
 										else if (isHighlightOriginCell)    { bg = "#ede8e0"; textColor = P.text; fontWeight = 700; }
 										else if (isNumberMatch)            { bg = "#f2ede6"; textColor = P.text; fontWeight = 700; }
-										else if (isRowColHighlight)        { bg = "#f7f3ee"; textColor = cell.fixed ? P.text2 : cell.value !== 0 ? (solverColor ?? P.text) : "rgba(0,0,0,0.08)"; fontWeight = cell.fixed || cell.value !== 0 ? 500 : 400; }
-										else if (cell.fixed)               { bg = P.cellFixed; textColor = P.text2; fontWeight = 600; }
+										else if (isRowColHighlight)        { bg = "#f7f3ee"; textColor = cell.fixed ? P.text : cell.value !== 0 ? (solverColor ?? P.text) : "rgba(0,0,0,0.08)"; fontWeight: cell.fixed || cell.value !== 0 ? 600 : 400; }
+										else if (cell.fixed)               { bg = P.cellFixed; textColor = highlightOrigin !== null ? P.text : P.text2; fontWeight = 600; }
 										else if (pendingValue !== null)     { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
 										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = solverColor ?? P.text; fontWeight = 600; }
 										else if (isWrong)                  { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
