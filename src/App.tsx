@@ -1078,6 +1078,54 @@ export function StarterApp() {
 									</button>
 								)}
 							</div>
+
+							{/* Number reference bar */}
+							<div className="mt-3 flex justify-between gap-1">
+								{[1,2,3,4,5,6,7,8,9].map((n) => {
+									const count = snapshot.cells.filter((c) => c.value === n).length;
+									const done = count >= 9;
+									const active = highlightNumber === n && highlightOrigin === null;
+									return (
+										<button
+											key={n}
+											type="button"
+											onClick={() => {
+												if (active) {
+													setHighlightNumber(null);
+												} else {
+													setHighlightNumber(n);
+													setHighlightOrigin(null);
+													setSelectedCellIndex(null);
+												}
+											}}
+											className="flex-1 flex flex-col items-center rounded-xl py-1.5 transition-all duration-150"
+											style={{
+												background: active ? P.accentSoft : "transparent",
+												border: active ? `1px solid ${P.accentBorder}` : "1px solid transparent",
+												opacity: done ? 0.28 : 1,
+												cursor: done ? "default" : "pointer",
+											}}
+											disabled={done}
+										>
+											<span
+												className="text-[15px] tabular-nums"
+												style={{
+													color: active ? P.accent : "#9e8f7c",
+													fontWeight: active ? 700 : 500,
+												}}
+											>
+												{n}
+											</span>
+											<span
+												className="text-[8px] tabular-nums mt-0.5"
+												style={{ color: P.text3 }}
+											>
+												{9 - count}
+											</span>
+										</button>
+									);
+								})}
+							</div>
 						</div>
 					</form>
 
