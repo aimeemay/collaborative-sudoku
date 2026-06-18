@@ -14,8 +14,12 @@ import { AzureFunctionTokenProvider, azureUser } from "./azureTokenProvider.js";
 
 const client = import.meta.env.VITE_FLUID_CLIENT;
 const local = client === undefined || client === "local";
+// Tinylicious endpoint: defaults to the local dev relay, but can be pointed at a
+// hosted tinylicious (e.g. on Fly.io) via VITE_TINYLICIOUS_ENDPOINT for online play.
+const tinyliciousEndpoint =
+	import.meta.env.VITE_TINYLICIOUS_ENDPOINT ?? "http://localhost:7070";
 if (local) {
-	console.warn(`Configured to use local tinylicious.`);
+	console.warn(`Configured to use tinylicious at ${tinyliciousEndpoint}.`);
 }
 
 export function getClientProps(
@@ -28,7 +32,7 @@ export function getClientProps(
 	const localConnectionConfig: AzureLocalConnectionConfig = {
 		type: "local",
 		tokenProvider: new InsecureTokenProvider("VALUE_NOT_USED", user ?? azureUser),
-		endpoint: "http://localhost:7070",
+		endpoint: tinyliciousEndpoint,
 	};
 
 	const remoteConnectionConfig: AzureRemoteConnectionConfig = {
