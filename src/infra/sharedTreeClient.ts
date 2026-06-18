@@ -299,13 +299,14 @@ export function rollbackSemanticEdit(tree: StarterTreeView, auditId: string): bo
 }
 
 export type SudokuSnapshot = {
-	cells: Array<{ value: number; fixed: boolean }>;
+	cells: Array<{ value: number; fixed: boolean; lockedBy?: string; lockedByName?: string }>;
 	players: Array<{ id: string; name: string; points: number }>;
 	currentTurnPlayerId?: string;
 	lastValidationMessage?: string;
 	difficulty: SudokuDifficulty;
 	roomAdminId?: string;
 	roomAdminName?: string;
+	gameMode: "classic" | "cosudoku";
 };
 
 export type SubmitSudokuMoveResult = {
@@ -317,7 +318,12 @@ export type SubmitSudokuMoveResult = {
 export function getSudokuSnapshot(tree: StarterTreeView): SudokuSnapshot {
 	const root = requireRoot(tree);
 	return {
-		cells: root.sudokuCells.map((cell) => ({ value: cell.value, fixed: cell.fixed })),
+		cells: root.sudokuCells.map((cell) => ({
+			value: cell.value,
+			fixed: cell.fixed,
+			lockedBy: cell.lockedBy,
+			lockedByName: cell.lockedByName,
+		})),
 		players: root.sudokuPlayers.map((player) => ({
 			id: player.id,
 			name: player.name,
@@ -328,12 +334,14 @@ export function getSudokuSnapshot(tree: StarterTreeView): SudokuSnapshot {
 		difficulty: normalizeDifficulty(root.sudokuDifficulty),
 		roomAdminId: root.roomAdminId,
 		roomAdminName: root.roomAdminName,
+		gameMode: root.gameMode === "cosudoku" ? "cosudoku" : "classic",
 	};
 }
 
 export function initializeGeneratedSudokuRoom(
 	tree: StarterTreeView,
-	difficulty: SudokuDifficulty
+	difficulty: SudokuDifficulty,
+	gameMode: "classic" | "cosudoku" = "classic"
 ): void {
 	const root = requireRoot(tree);
 	const generated = generateSudoku(difficulty);
@@ -352,8 +360,25 @@ export function initializeGeneratedSudokuRoom(
 		root.sudokuDifficulty = generated.difficulty;
 		root.sudokuPlayers = new SudokuPlayers([]);
 		root.currentTurnPlayerId = undefined;
-		root.lastValidationMessage = `New ${generated.difficulty} board generated.`;
+		root.lastValidationMessage = undefined;
+		root.gameMode = gameMode;
 	});
+}
+
+export function claimAdminRole(tree: StarterTreeView, playerId: string, playerName: string): void {
+	const root = requireRoot(tree);
+	Tree.runTransaction(root, () => {
+		root.roomAdminId = playerId;
+		root.roomAdminName = playerName;
+	});
+}
+
+export function isNameTaken(tree: StarterTreeView, name: string, excludeId?: string): boolean {
+	const root = requireRoot(tree);
+	const normalized = name.trim().toLowerCase();
+	return root.sudokuPlayers.some(
+		(p) => p.name.trim().toLowerCase() === normalized && p.id !== excludeId
+	);
 }
 
 export function initializeRoomAdmin(
@@ -491,7 +516,47 @@ export function submitSudokuMoveAndPassTurn(
 	return result;
 }
 
-export function kickSudokuPlayer(tree: StarterTreeView, actorId: string, targetPlayerId: string): boolean {
+export function removeDisconnectedPlayers(tree: StarterTreeView, connectedIds: Set<string>): void {
+	const root = requireRoot(tree);
+	Tree.runTransaction(root, () => {
+		// Walk backwards so removeAt indices stay valid
+		for (let i = root.sudokuPlayers.length - 1; i >= 0; i--) {
+			const p = root.sudokuPlayers[i];
+			if (!connectedIds.has(p.id)) {
+				// Unlock any cells held by this player
+				for (let j = 0; j < root.sudokuCells.length; j++) {
+					const cell = root.sudokuCells[j];
+					if (cell.lockedBy === p.id) {
+						root.sudokuCells.removeAt(j);
+						root.sudokuCells.insertAt(j, new SudokuCell({ value: cell.value, fixed: cell.fixed }));
+					}
+				}
+				root.sudokuPlayers.removeAt(i);
+				if (root.currentTurnPlayerId === p.id) {
+					root.currentTurnPlayerId = root.sudokuPlayers.length > 0
+						? root.sudokuPlayers[Math.min(i, root.sudokuPlayers.length - 1)].id
+						: undefined;
+				}
+			}
+		}
+
+		// If the room admin is gone, hand the hat to the first remaining player
+		const adminStillHere =
+			root.roomAdminId && root.sudokuPlayers.some((p) => p.id === root.roomAdminId);
+		if (!adminStillHere) {
+			if (root.sudokuPlayers.length > 0) {
+				root.roomAdminId = root.sudokuPlayers[0].id;
+				root.roomAdminName = root.sudokuPlayers[0].name;
+			} else {
+				root.roomAdminId = undefined;
+				root.roomAdminName = undefined;
+			}
+		}
+	});
+}
+
+export function kickSudokuPlayer(
+	tree: StarterTreeView, actorId: string, targetPlayerId: string): boolean {
 	const root = requireRoot(tree);
 	let didKick = false;
 
@@ -681,4 +746,125 @@ function normalizeDifficulty(value?: string): SudokuDifficulty {
 		return value;
 	}
 	return "easy";
+}
+
+// ─── CoSudoku (collaborative simultaneous mode) ───────────────────────────
+
+export function lockSudokuCell(
+	tree: StarterTreeView,
+	cellIndex: number,
+	playerId: string,
+	playerName: string
+): boolean {
+	const root = requireRoot(tree);
+	let locked = false;
+	Tree.runTransaction(root, () => {
+		const cell = root.sudokuCells[cellIndex];
+		if (!cell || cell.fixed || cell.value !== 0) return;
+		if (cell.lockedBy && cell.lockedBy !== playerId) return;
+
+		// Unlock any other cells this player holds
+		for (let i = 0; i < root.sudokuCells.length; i++) {
+			const c = root.sudokuCells[i];
+			if (c.lockedBy === playerId && i !== cellIndex) {
+				root.sudokuCells.removeAt(i);
+				root.sudokuCells.insertAt(
+					i,
+					new SudokuCell({ value: c.value, fixed: c.fixed })
+				);
+			}
+		}
+
+		// Lock the target cell
+		root.sudokuCells.removeAt(cellIndex);
+		root.sudokuCells.insertAt(
+			cellIndex,
+			new SudokuCell({
+				value: cell.value,
+				fixed: cell.fixed,
+				lockedBy: playerId,
+				lockedByName: playerName,
+			})
+		);
+		locked = true;
+	});
+	return locked;
+}
+
+export function unlockSudokuCell(tree: StarterTreeView, playerId: string): void {
+	const root = requireRoot(tree);
+	Tree.runTransaction(root, () => {
+		for (let i = 0; i < root.sudokuCells.length; i++) {
+			const c = root.sudokuCells[i];
+			if (c.lockedBy === playerId) {
+				root.sudokuCells.removeAt(i);
+				root.sudokuCells.insertAt(
+					i,
+					new SudokuCell({ value: c.value, fixed: c.fixed })
+				);
+			}
+		}
+	});
+}
+
+export function submitCoSudokuMove(
+	tree: StarterTreeView,
+	move: { playerId: string; playerName: string; cellIndex: number; value: number }
+): SubmitSudokuMoveResult {
+	const root = requireRoot(tree);
+	let result: SubmitSudokuMoveResult = { committed: false, message: "Move was not processed." };
+
+	Tree.runTransaction(root, () => {
+		ensureSudokuPlayer(root, move.playerId, move.playerName);
+
+		const cell = root.sudokuCells[move.cellIndex];
+		if (!cell || cell.fixed || cell.value !== 0) {
+			result = { committed: false, message: "Cell not available." };
+			return;
+		}
+		if (cell.lockedBy && cell.lockedBy !== move.playerId) {
+			result = { committed: false, message: "Cell is locked by another player." };
+			return;
+		}
+
+		const validation = validateSudokuMove(root, move.cellIndex, move.value);
+		const playerIndex = root.sudokuPlayers.findIndex((p) => p.id === move.playerId);
+
+		if (!validation.ok) {
+			if (validation.isWrongAnswer && playerIndex >= 0) {
+				const player = root.sudokuPlayers[playerIndex];
+				root.sudokuPlayers.removeAt(playerIndex);
+				root.sudokuPlayers.insertAt(
+					playerIndex,
+					new SudokuPlayer({ id: player.id, name: player.name, points: player.points - 1 })
+				);
+			}
+			// Unlock the cell
+			root.sudokuCells.removeAt(move.cellIndex);
+			root.sudokuCells.insertAt(
+				move.cellIndex,
+				new SudokuCell({ value: cell.value, fixed: cell.fixed })
+			);
+			result = { committed: false, message: validation.message };
+			return;
+		}
+
+		// Correct — place value and award point
+		root.sudokuCells.removeAt(move.cellIndex);
+		root.sudokuCells.insertAt(
+			move.cellIndex,
+			new SudokuCell({ value: move.value, fixed: false })
+		);
+		if (playerIndex >= 0) {
+			const player = root.sudokuPlayers[playerIndex];
+			root.sudokuPlayers.removeAt(playerIndex);
+			root.sudokuPlayers.insertAt(
+				playerIndex,
+				new SudokuPlayer({ id: player.id, name: player.name, points: player.points + 1 })
+			);
+		}
+		result = { committed: true, message: "Correct!" };
+	});
+
+	return result;
 }

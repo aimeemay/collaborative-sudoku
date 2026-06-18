@@ -27,6 +27,8 @@ export class SemanticEditLog extends sf.array("SemanticEditLog", SemanticEditLog
 export class SudokuCell extends sf.object("SudokuCell", {
 	value: sf.number,
 	fixed: sf.boolean,
+	lockedBy: sf.optional(sf.string),
+	lockedByName: sf.optional(sf.string),
 }) {}
 
 export class SudokuCells extends sf.array("SudokuCells", SudokuCell) {}
@@ -51,6 +53,7 @@ export class AppModel extends sf.object("AppModel", {
 	sudokuDifficulty: sf.optional(sf.string),
 	roomAdminId: sf.optional(sf.string),
 	roomAdminName: sf.optional(sf.string),
+	gameMode: sf.optional(sf.string),
 }) {}
 
 export const starterTreeConfiguration = new TreeViewConfiguration({ schema: AppModel });
