@@ -18,6 +18,7 @@ import {
 } from "./infra/sharedTreeClient.js";
 import { usePresenceUsers, useCellPresence } from "./infra/presenceClient.js";
 import type { AppModel } from "./schema/starterSchema.js";
+import { saveLeaderboardEntry, formatElapsed } from "./utils/leaderboard.js";
 
 // ─── Palette ───────────────────────────────────────────────────────────────
 
@@ -468,21 +469,36 @@ export function StarterApp() {
 	type GamePhase = 'playing' | 'complete';
 	const [gamePhase, setGamePhase] = React.useState<GamePhase>('playing');
 	const [victoryConfetti, setVictoryConfetti] = React.useState<VictoryParticle[]>([]);
+	const [completionElapsedMs, setCompletionElapsedMs] = React.useState<number | null>(null);
 	const victoryFiredRef = React.useRef(false);
 
 	React.useEffect(() => {
 		if (isPuzzleComplete && !victoryFiredRef.current) {
 			victoryFiredRef.current = true;
+			// Freeze the elapsed time at completion moment
+			const frozenElapsed = snapshot.gameStartedAt ? Date.now() - snapshot.gameStartedAt : 0;
+			setCompletionElapsedMs(frozenElapsed);
 			setTimeout(() => {
 				playVictorySound();
 				setVictoryConfetti(makeVictoryConfetti());
 				setGamePhase('complete');
-			}, 600); // small delay to let last cell animation play
+				// Save to leaderboard
+				if (frozenElapsed > 0) {
+					saveLeaderboardEntry({
+						id: crypto.randomUUID(),
+						completedAt: Date.now(),
+						elapsedMs: frozenElapsed,
+						difficulty: snapshot.difficulty,
+						gameMode: snapshot.gameMode,
+						players: snapshot.players.map((p) => p.name),
+					});
+				}
+			}, 600);
 		}
 		if (!isPuzzleComplete) {
 			victoryFiredRef.current = false;
 		}
-	}, [isPuzzleComplete]);
+	}, [isPuzzleComplete, snapshot.gameStartedAt, snapshot.difficulty, snapshot.gameMode, snapshot.players]);
 
 	// Broadcast my hovered cell to other players
 	React.useEffect(() => {
@@ -719,11 +735,11 @@ export function StarterApp() {
 
 	const roomCode = new URLSearchParams(window.location.search).get("id") ?? "";
 
-	const elapsedMs = snapshot.gameStartedAt ? Date.now() - snapshot.gameStartedAt : 0;
-	const elapsedSecs = Math.floor(elapsedMs / 1000);
-	const elapsedDisplay = elapsedMs > 0
-		? `${Math.floor(elapsedSecs / 60)}:${String(elapsedSecs % 60).padStart(2, '0')}`
-		: '—';
+	// Use frozen elapsed on victory screen so timer doesn't keep ticking
+	const liveElapsedMs = snapshot.gameStartedAt ? Date.now() - snapshot.gameStartedAt : 0;
+	const elapsedDisplay = completionElapsedMs != null
+		? formatElapsed(completionElapsedMs)
+		: liveElapsedMs > 0 ? formatElapsed(liveElapsedMs) : '—';
 
 	const sortedPlayers = [...snapshot.players].sort((a, b) => b.points - a.points);
 
@@ -731,6 +747,7 @@ export function StarterApp() {
 		replaySudokuRoom(tree, snapshot.difficulty, snapshot.gameMode);
 		setGamePhase('playing');
 		setVictoryConfetti([]);
+		setCompletionElapsedMs(null);
 		victoryFiredRef.current = false;
 		prevCellValuesRef.current = [];
 	};
