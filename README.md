@@ -43,6 +43,10 @@ If port 8080 is in use: `npm run dev -- --port 8081`
 - `src/App.tsx` — main game UI
 - `src/start/starterStart.tsx` — lobby / room create+join screen
 
+## Contributing
+
+Every commit to `main` automatically asks Copilot to review and update this README. So just ship — the docs keep up. 🎲
+
 ## Made by
 
 [Aimee Leong](https://github.com/aimeemay)
