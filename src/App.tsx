@@ -946,22 +946,28 @@ export function StarterApp() {
 					</div>
 				</header>
 
-				<div className="mx-auto max-w-5xl px-5 pt-6 pb-20 flex flex-col gap-5">
+				<div className="mx-auto w-full max-w-5xl px-5 pt-5 pb-10">
 
-					{/* Main layout: board + unified sidebar */}
-					<div className="grid gap-5 lg:grid-cols-[1fr_220px] items-start">
+					{/* Main layout: board + sidebar */}
+					<div className="flex gap-5 items-start">
 
 					{/* Board column */}
-					<form onSubmit={handleSubmit}>
-						<div className="mx-auto w-full max-w-[min(72vh,520px)]">
-							<div
-								className="rounded-2xl overflow-hidden transition-shadow duration-300"
-								style={{
-									...glassBoldCard,
-									boxShadow: glassBoldCard.boxShadow,
-								}}
-							>
-								<div className="grid grid-cols-9" data-sudoku-grid style={{ background: P.boardLine, gap: "1px", padding: "2px", borderRadius: "16px" }}>
+					<form onSubmit={handleSubmit} className="flex-1 min-w-0">
+						<div className="mx-auto" style={{ maxWidth: "clamp(360px, calc(100vh - 180px), 580px)" }}>
+
+							{/* Grid + number column side by side */}
+							<div className="flex items-stretch gap-3">
+
+								{/* Grid */}
+								<div className="flex-1 min-w-0 flex flex-col">
+									<div
+										className="rounded-2xl overflow-hidden transition-shadow duration-300"
+										style={{
+											...glassBoldCard,
+											boxShadow: glassBoldCard.boxShadow,
+										}}
+									>
+									<div className="grid grid-cols-9 w-full" data-sudoku-grid style={{ background: P.boardLine, gap: "1px", padding: "2px", borderRadius: "16px" }}>
 									{snapshot.cells.map((cell, index) => {
 										const row = Math.floor(index / 9);
 										const col = index % 9;
@@ -1079,95 +1085,99 @@ export function StarterApp() {
 											</button>
 										);
 									})}
-								</div>
-							</div>
+								</div>{/* close grid grid-cols-9 */}
+								</div>{/* close glassBoldCard */}
+								</div>{/* close flex-1 grid */}
 
-							{/* Action buttons — inside the same max-w wrapper so they align */}
-							<div className="mt-4 flex items-center gap-2.5 justify-end">
-								<button
-									type="submit"
-									disabled={!canSubmit}
-									className="rounded-2xl px-5 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 disabled:opacity-30"
-									style={{
-										background: isCo
-											? `linear-gradient(135deg, ${myColor}, ${myColor}cc)`
-											: `linear-gradient(135deg, ${P.accent}, #a08665)`,
-										boxShadow: canSubmit ? `0 2px 12px ${isCo ? myColor : "rgba(139,115,85,0.3)"}40` : "none",
-									}}
-								>
-									Submit
-									<span className="ml-1.5 text-[10px] font-normal opacity-70">↵</span>
-								</button>
-								{!isCo && (
-									<button
-										type="button"
-										disabled={!isMyTurn}
-										onClick={handlePass}
-										className="rounded-2xl px-4 py-2.5 text-[13px] font-medium transition-all duration-200 disabled:opacity-30"
-										style={glassCard}
-									>
-										Pass
-									</button>
-								)}
-							</div>
-
-							{/* Number reference bar */}
-							<div className="mt-4 flex justify-between px-1">
-								{[1,2,3,4,5,6,7,8,9].map((n) => {
-									const count = snapshot.cells.filter((c) => c.value === n).length;
-									const done = count >= 9;
-									const active = highlightNumber === n && highlightOrigin === null;
-									return (
-										<button
-											key={n}
-											type="button"
-											onClick={() => {
-												if (active) {
-													setHighlightNumber(null);
-												} else {
-													setHighlightNumber(n);
-													setHighlightOrigin(null);
-													setSelectedCellIndex(null);
-												}
-											}}
-											className="flex flex-col items-center gap-0.5 transition-all duration-150"
-											style={{
-												background: "none",
-												border: "none",
-												padding: "4px 6px",
-												opacity: done ? 0.25 : 1,
-												cursor: done ? "default" : "pointer",
-											}}
-											disabled={done}
-										>
-											<span
-												className="text-[17px] tabular-nums leading-none"
-												style={{
-													color: active ? P.text : P.text3,
-													fontWeight: active ? 700 : 400,
-													letterSpacing: "-0.02em",
+								{/* Number reference column — right of grid */}
+								<div className="flex flex-col justify-around py-0.5 shrink-0">
+									{[1,2,3,4,5,6,7,8,9].map((n) => {
+										const count = snapshot.cells.filter((c) => c.value === n).length;
+										const done = count >= 9;
+										const active = highlightNumber === n && highlightOrigin === null;
+										return (
+											<button
+												key={n}
+												type="button"
+												onClick={() => {
+													if (active) {
+														setHighlightNumber(null);
+													} else {
+														setHighlightNumber(n);
+														setHighlightOrigin(null);
+														setSelectedCellIndex(null);
+													}
 												}}
+												className="flex flex-col items-center gap-0.5 transition-all duration-150"
+												style={{
+													background: "none",
+													border: "none",
+													padding: "2px 6px",
+													opacity: done ? 0.22 : 1,
+													cursor: done ? "default" : "pointer",
+												}}
+												disabled={done}
 											>
-												{n}
-											</span>
-											<span
-												className="text-[8px] tabular-nums leading-none"
-												style={{ color: active ? P.text3 : "rgba(0,0,0,0.18)" }}
-											>
-												{9 - count}
-											</span>
-										</button>
-									);
-								})}
-							</div>
-						</div>
-					</form>
+												<span
+													className="text-[15px] tabular-nums leading-none"
+													style={{
+														color: active ? P.text : P.text3,
+														fontWeight: active ? 700 : 400,
+														letterSpacing: "-0.02em",
+													}}
+												>
+													{n}
+												</span>
+												<span
+													className="text-[7px] tabular-nums leading-none"
+													style={{ color: active ? P.text3 : "rgba(0,0,0,0.18)" }}
+												>
+													{9 - count}
+												</span>
+											</button>
+										);
+									})}
+								</div>
 
-					{/* ── Unified sidebar ──────────── */}
-					<aside
-						className="rounded-3xl p-5 self-start flex flex-col gap-4"
-						style={glassBoldCard}
-					>
+					</div>{/* close flex row */}
+
+					{/* Action buttons */}
+					<div className="mt-4 flex items-center gap-2.5 justify-end pr-10">
+							<button
+								type="submit"
+								disabled={!canSubmit}
+								className="rounded-2xl px-5 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 disabled:opacity-30"
+								style={{
+									background: isCo
+										? `linear-gradient(135deg, ${myColor}, ${myColor}cc)`
+										: `linear-gradient(135deg, ${P.accent}, #a08665)`,
+									boxShadow: canSubmit ? `0 2px 12px ${isCo ? myColor : "rgba(139,115,85,0.3)"}40` : "none",
+								}}
+							>
+								Submit
+								<span className="ml-1.5 text-[10px] font-normal opacity-70">↵</span>
+							</button>
+							{!isCo && (
+								<button
+									type="button"
+									disabled={!isMyTurn}
+									onClick={handlePass}
+									className="rounded-2xl px-4 py-2.5 text-[13px] font-medium transition-all duration-200 disabled:opacity-30"
+									style={glassCard}
+								>
+									Pass
+								</button>
+							)}
+					</div>
+
+					</div>{/* close max-w wrapper */}
+				</form>
+
+				{/* ── Unified sidebar ──────────── */}
+				<aside
+					className="rounded-3xl p-5 self-start flex flex-col gap-4 shrink-0 w-[220px]"
+					style={glassBoldCard}
+				>
 						{/* Turn / mode indicator */}
 						{isCo ? (
 							<>

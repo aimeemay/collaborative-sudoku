@@ -112,7 +112,9 @@ function StarterBootstrap() {
 		if (id) void launchRoom(id, false);
 	}, [launchRoom]);
 
-	const [leaderboard] = React.useState<LeaderboardEntry[]>(() => getLeaderboard().slice(0, 10));
+	const [allEntries] = React.useState<LeaderboardEntry[]>(() => getLeaderboard());
+	const [diffTab, setDiffTab] = React.useState<"easy" | "medium" | "hard">("easy");
+	const leaderboard = allEntries.filter(e => e.difficulty === diffTab).slice(0, 10);
 
 	if (runtime) return runtime;
 
@@ -136,10 +138,13 @@ function StarterBootstrap() {
 			style={{
 				background: `linear-gradient(135deg, ${P.bgFrom} 0%, ${P.bgVia} 50%, ${P.bgTo} 100%)`,
 				fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif",
+				height: "100vh",
+				overflowY: "scroll",
+				scrollSnapType: "y mandatory",
 			}}
 		>
 			{/* ── Hero page ────────────────────────────────────────────── */}
-			<div className="relative h-screen flex flex-col items-center px-4 py-12 overflow-y-auto">
+			<div className="relative flex flex-col items-center px-4 py-12 overflow-hidden" style={{ height: "100vh", scrollSnapAlign: "start" }}>
 				<div className="flex-1 flex items-center justify-center w-full">
 				<div className="w-full max-w-[360px] flex flex-col gap-5">
 
@@ -337,27 +342,59 @@ function StarterBootstrap() {
 			</div>
 
 			{/* Scroll-down hint — pinned to bottom of hero viewport */}
-			{leaderboard.length > 0 && (
-				<div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 animate-bounce" style={{ color: P.text3 }}>
-					<span className="text-[11px] font-medium tracking-wide">Leaderboard</span>
-					<span className="text-[14px]">↓</span>
-				</div>
-			)}
+			<div className="absolute bottom-6 left-6 flex flex-col items-start gap-1 animate-bounce pointer-events-none" style={{ color: P.text3 }}>
+				<span className="text-[11px] font-medium tracking-wide">Leaderboard</span>
+				<span className="text-[14px]">↓</span>
+			</div>
+
+			{/* Hero page footer */}
+			<p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none pointer-events-none" style={{ color: P.text3 }}>
+				created by aimee leong
+			</p>
 		</div>
 
 		{/* ── Leaderboard page ─────────────────────────────────────── */}
-		{leaderboard.length > 0 && (
-			<div className="min-h-screen flex flex-col items-center px-4 py-20">
-				<div className="w-full max-w-[440px]">
-					<div className="text-center mb-10">
-						<h2 className="text-xl font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
-							All-Time Best
-						</h2>
-						<p className="mt-1 text-[13px]" style={{ color: P.text3 }}>
-							Top 10 fastest completions
-						</p>
-					</div>
+		<div className="relative flex flex-col items-center px-4 pt-16 pb-10 overflow-y-auto" style={{ height: "100vh", scrollSnapAlign: "start" }}>
 
+			{/* Back nudge — top left */}
+			<div className="absolute top-6 left-6 flex flex-col items-start gap-1 animate-bounce pointer-events-none" style={{ color: P.text3 }}>
+				<span className="text-[14px]">↑</span>
+				<span className="text-[11px] font-medium tracking-wide">Play Sudoku</span>
+			</div>
+
+			<div className="w-full max-w-[440px] flex-1">
+				<div className="text-center mb-8">
+					<h2 className="text-xl font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
+						All-Time Best
+					</h2>
+				</div>
+
+				{/* Difficulty tabs — floating text style */}
+				<div className="flex justify-center gap-6 mb-6">
+					{(["easy", "medium", "hard"] as const).map(d => (
+						<button
+							key={d}
+							onClick={() => setDiffTab(d)}
+							className="text-[13px] font-medium transition-all duration-150 bg-transparent border-none p-0"
+							style={{
+								color: diffTab === d ? P.text : P.text3,
+								fontWeight: diffTab === d ? 600 : 400,
+								borderBottom: diffTab === d ? `1.5px solid ${P.text}` : "1.5px solid transparent",
+								paddingBottom: "2px",
+							}}
+						>
+							{d.charAt(0).toUpperCase() + d.slice(1)}
+						</button>
+					))}
+				</div>
+
+				{leaderboard.length === 0 ? (
+					<div className="text-center py-16" style={{ color: P.text3 }}>
+						<p className="text-[32px] mb-3">🏆</p>
+						<p className="text-[14px] font-medium">No {diffTab} games yet</p>
+						<p className="text-[12px] mt-1 opacity-70">Complete a puzzle to set the first record!</p>
+					</div>
+				) : (
 					<ol className="flex flex-col gap-3">
 						{leaderboard.map((entry, i) => {
 							const isMedal = i < 3;
@@ -377,15 +414,10 @@ function StarterBootstrap() {
 												{isMedal ? MEDAL[i] : <span className="text-[13px]" style={{ color: P.text3 }}>{i + 1}</span>}
 											</span>
 											<div className="min-w-0">
-												<p
-													className="text-[13px] font-medium truncate"
-													style={{ color: P.text }}
-												>
+												<p className="text-[13px] font-medium truncate" style={{ color: P.text }}>
 													{entry.players.length > 0 ? entry.players.join(" · ") : "Anonymous"}
 												</p>
 												<p className="text-[11px] mt-0.5" style={{ color: P.text3 }}>
-													{entry.difficulty.charAt(0).toUpperCase() + entry.difficulty.slice(1)}
-													{" · "}
 													{new Date(entry.completedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
 												</p>
 											</div>
@@ -401,20 +433,13 @@ function StarterBootstrap() {
 							);
 						})}
 					</ol>
-				</div>
-
-				<p className="mt-16 text-[11px] font-medium select-none" style={{ color: P.text3 }}>
-					created by aimee leong
-				</p>
+				)}
 			</div>
-		)}
 
-		{/* Footer on hero when no leaderboard */}
-		{leaderboard.length === 0 && (
-			<p className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none" style={{ color: P.text3 }}>
+			<p className="mt-10 text-[11px] font-medium select-none pointer-events-none" style={{ color: P.text3 }}>
 				created by aimee leong
 			</p>
-		)}
+		</div>
 		</div>
 	);
-}
+	}
