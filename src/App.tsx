@@ -971,9 +971,9 @@ export function StarterApp() {
 										else if (isHighlightOriginCell)    { bg = "#ddd6c8"; textColor = P.text; fontWeight = 800; }
 										else if (isNumberMatch)            { bg = "#e8e0d2"; textColor = P.text; fontWeight = 700; }
 										else if (isRowColHighlight)        { bg = "#ede8e0"; textColor = cell.fixed ? P.text : cell.value !== 0 ? (solverColor ?? P.text) : "rgba(0,0,0,0.10)"; fontWeight = cell.fixed || cell.value !== 0 ? 600 : 400; }
-										else if (cell.fixed)               { bg = P.cellFixed; textColor = isActive ? "rgba(44,36,24,0.22)" : P.text2; fontWeight = isActive ? 500 : 600; }
+										else if (cell.fixed)               { bg = P.cellFixed; textColor = "#9e8f7c"; fontWeight = 600; }
 										else if (pendingValue !== null)     { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
-										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = isActive ? (solverColor ? `${solverColor}55` : "rgba(44,36,24,0.22)") : (solverColor ?? P.text); fontWeight = isActive ? 500 : 600; }
+										else if (cell.value !== 0)         { bg = P.cellEmpty; textColor = solverColor ?? "#7a6b58"; fontWeight = 500; }
 										else if (isWrong)                  { bg = P.cellEmpty; textColor = isCo ? myColor : P.accent; fontWeight = 700; }
 										else                               { bg = P.cellEmpty; textColor = "rgba(0,0,0,0.08)"; }
 
