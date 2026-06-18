@@ -395,7 +395,7 @@ export function StarterApp() {
 	// Cmd+, opens dev panel
 	React.useEffect(() => {
 		const handler = (e: KeyboardEvent) => {
-			if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ",") {
 				e.preventDefault();
 				setDevPanelOpen((v) => !v);
 			}
@@ -1344,7 +1344,7 @@ export function StarterApp() {
 					</button>
 
 					<p className="text-[10px]" style={{ color: "rgba(255,255,255,0.2)" }}>
-						⌘, to toggle · Esc to close
+						⌘⇧, to toggle · Esc to close
 					</p>
 				</div>
 			)}
