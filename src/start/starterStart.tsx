@@ -31,8 +31,30 @@ const P = {
 } as const;
 
 function makeUser(): PresenceUser {
+	const KEY = "sudoku.me";
+	// Persist identity per-tab so a reload keeps the same id (admin stays admin,
+	// scores survive a refresh, and the Fluid audience sees a reconnect rather
+	// than a fresh player). sessionStorage is per-tab, so two tabs in the same
+	// browser still get distinct identities.
+	try {
+		const saved = sessionStorage.getItem(KEY);
+		if (saved) {
+			const parsed = JSON.parse(saved) as Partial<PresenceUser>;
+			if (parsed && typeof parsed.id === "string" && typeof parsed.name === "string") {
+				return { id: parsed.id, name: parsed.name };
+			}
+		}
+	} catch {
+		/* ignore storage/parse errors and fall through to a fresh identity */
+	}
 	const name = uniqueNamesGenerator({ dictionaries: [adjectives, colors, animals], length: 2 });
-	return { id: crypto.randomUUID(), name };
+	const user: PresenceUser = { id: crypto.randomUUID(), name };
+	try {
+		sessionStorage.setItem(KEY, JSON.stringify(user));
+	} catch {
+		/* ignore storage errors */
+	}
+	return user;
 }
 
 export async function startStarter() {
@@ -65,17 +87,23 @@ function StarterBootstrap() {
 	const [difficulty, setDifficulty] = React.useState<SudokuDifficulty>("easy");
 	const [gameMode, setGameMode] = React.useState<"classic" | "cosudoku">("cosudoku");
 
-	const client = React.useMemo(() => new AzureClient(getClientProps()), []);
 	const meRef = React.useRef<PresenceUser | null>(null);
 	if (!meRef.current) meRef.current = makeUser();
 	const me = meRef.current;
+
+	// Connect to Fluid using the app's player identity so the relay audience keys
+	// members by the same id the game uses — letting us track joins/leaves reliably.
+	const client = React.useMemo(
+		() => new AzureClient(getClientProps({ id: me.id, name: me.name, image: "" })),
+		[me.id, me.name]
+	);
 
 	const launchRoom = React.useCallback(
 		async (containerId: string, makeAdmin: boolean, diff: SudokuDifficulty = "easy", mode: "classic" | "cosudoku" = "classic") => {
 			setBusy(true);
 			setError(null);
 			try {
-				const { container, tree } = await loadStarterContainer({ client, containerId });
+				const { container, tree, audience } = await loadStarterContainer({ client, containerId });
 				if (makeAdmin) {
 					initializeRoomAdmin(tree, { id: me.id, name: me.name });
 					initializeGeneratedSudokuRoom(tree, diff, mode);
@@ -93,7 +121,7 @@ function StarterBootstrap() {
 				const presence = createPresenceClients(container, me);
 				const llm = createLlmClient();
 				setRuntime(
-					<FluidProvider value={{ container, tree, presence, llm, me }}>
+					<FluidProvider value={{ container, tree, presence, llm, me, audience }}>
 						<StarterApp />
 					</FluidProvider>
 				);
