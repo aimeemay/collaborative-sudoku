@@ -300,6 +300,7 @@ export function rollbackSemanticEdit(tree: StarterTreeView, auditId: string): bo
 
 export type SudokuSnapshot = {
 	cells: Array<{ value: number; fixed: boolean; lockedBy?: string; lockedByName?: string; solvedBy?: string }>;
+	solution: string;
 	players: Array<{ id: string; name: string; points: number }>;
 	currentTurnPlayerId?: string;
 	lastValidationMessage?: string;
@@ -307,6 +308,7 @@ export type SudokuSnapshot = {
 	roomAdminId?: string;
 	roomAdminName?: string;
 	gameMode: "classic" | "cosudoku";
+	gameStartedAt?: number;
 };
 
 export type SubmitSudokuMoveResult = {
@@ -325,6 +327,7 @@ export function getSudokuSnapshot(tree: StarterTreeView): SudokuSnapshot {
 			lockedByName: cell.lockedByName,
 			solvedBy: cell.solvedBy,
 		})),
+		solution: root.sudokuSolution,
 		players: root.sudokuPlayers.map((player) => ({
 			id: player.id,
 			name: player.name,
@@ -336,6 +339,7 @@ export function getSudokuSnapshot(tree: StarterTreeView): SudokuSnapshot {
 		roomAdminId: root.roomAdminId,
 		roomAdminName: root.roomAdminName,
 		gameMode: root.gameMode === "cosudoku" ? "cosudoku" : "classic",
+		gameStartedAt: root.gameStartedAt,
 	};
 }
 
@@ -363,6 +367,43 @@ export function initializeGeneratedSudokuRoom(
 		root.currentTurnPlayerId = undefined;
 		root.lastValidationMessage = undefined;
 		root.gameMode = gameMode;
+		root.gameStartedAt = Date.now();
+	});
+}
+
+/** Replay in the same room: fresh puzzle, same players with reset scores. */
+export function replaySudokuRoom(
+	tree: StarterTreeView,
+	difficulty: SudokuDifficulty,
+	gameMode: "classic" | "cosudoku" = "classic"
+): void {
+	const root = requireRoot(tree);
+	const generated = generateSudoku(difficulty);
+
+	Tree.runTransaction(root, () => {
+		root.sudokuCells = new SudokuCells(
+			generated.puzzle.split("").map(
+				(char) =>
+					new SudokuCell({
+						value: Number(char),
+						fixed: char !== "0",
+					})
+			)
+		);
+		root.sudokuSolution = generated.solution;
+		root.sudokuDifficulty = generated.difficulty;
+		root.gameMode = gameMode;
+		root.lastValidationMessage = undefined;
+		root.gameStartedAt = Date.now();
+
+		// Reset scores but keep players
+		const resetPlayers = root.sudokuPlayers.map((p) =>
+			new SudokuPlayer({ id: p.id, name: p.name, points: 0 })
+		);
+		root.sudokuPlayers = new SudokuPlayers(resetPlayers);
+
+		// Give turn to first player
+		root.currentTurnPlayerId = root.sudokuPlayers[0]?.id;
 	});
 }
 

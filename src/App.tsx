@@ -13,6 +13,7 @@ import {
 	claimAdminRole,
 	isNameTaken,
 	removeDisconnectedPlayers,
+	replaySudokuRoom,
 } from "./infra/sharedTreeClient.js";
 import { usePresenceUsers, useCellPresence } from "./infra/presenceClient.js";
 import type { AppModel } from "./schema/starterSchema.js";
@@ -122,6 +123,30 @@ function playWrongSound() {
 	osc.stop(now + 0.57);
 }
 
+function playVictorySound() {
+	const ctx = getAudioCtx();
+	if (!ctx) return;
+	// Triumphant yayyyy — ascending major chord arpeggio then full chord bloom
+	const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5]; // C5 E5 G5 C6 E6
+	const delays = [0, 0.10, 0.20, 0.30, 0.42];
+	const now = ctx.currentTime;
+	notes.forEach((freq, i) => {
+		const osc = ctx.createOscillator();
+		const gain = ctx.createGain();
+		osc.connect(gain);
+		gain.connect(ctx.destination);
+		osc.type = i < 3 ? "triangle" : "sine";
+		osc.frequency.setValueAtTime(freq, now);
+		const t = now + delays[i];
+		gain.gain.setValueAtTime(0, t);
+		gain.gain.linearRampToValueAtTime(0.14, t + 0.05);
+		gain.gain.setValueAtTime(0.14, t + 0.25);
+		gain.gain.exponentialRampToValueAtTime(0.001, t + 1.4);
+		osc.start(t);
+		osc.stop(t + 1.5);
+	});
+}
+
 // ─── Confetti particles ────────────────────────────────────────────────────
 
 const CONFETTI_COLORS = [
@@ -191,6 +216,57 @@ function makeConfetti(cellIdx: number, playerColor: string): ConfettiParticle[] 
 			delay: rng() * 100,
 			duration: 420 + rng() * 220,
 			spin: (rng() - 0.5) * 600,
+		};
+	});
+}
+
+// ─── Victory confetti (full-screen rain) ─────────────────────────────────────
+
+type VictoryParticle = {
+	id: number;
+	left: number;   // vw %
+	width: number;
+	height: number;
+	radius: string;
+	color: string;
+	borderColor?: string;
+	delay: number;  // ms
+	duration: number; // ms
+	spin: number;
+	drift: number; // px horizontal drift during fall
+};
+
+function makeVictoryConfetti(): VictoryParticle[] {
+	return Array.from({ length: 60 }, (_, i) => {
+		const rng = (() => {
+			let s = (i + 1) * 22695477 + 1;
+			return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+		})();
+		const typeRoll = rng();
+		let width: number, height: number, radius: string, borderColor: string | undefined;
+		const color = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+		if (typeRoll < 0.25) {
+			const s = 6 + rng() * 8; width = s; height = s; radius = '50%';
+		} else if (typeRoll < 0.45) {
+			const s = 6 + rng() * 7; width = s; height = s; radius = '50%';
+			borderColor = CONFETTI_COLORS[(i + 3) % CONFETTI_COLORS.length];
+		} else if (typeRoll < 0.70) {
+			width = 8 + rng() * 10; height = 4 + rng() * 3; radius = '99px';
+		} else {
+			const s = 3 + rng() * 3; width = s; height = s; radius = '50%';
+		}
+		return {
+			id: i,
+			left: rng() * 100,
+			width,
+			height,
+			radius,
+			color: borderColor ? 'transparent' : color,
+			borderColor,
+			delay: rng() * 1200,
+			duration: 1800 + rng() * 1400,
+			spin: (rng() - 0.5) * 720,
+			drift: (rng() - 0.5) * 80,
 		};
 	});
 }
@@ -366,6 +442,32 @@ export function StarterApp() {
 		}
 		prevCellValuesRef.current = curr;
 	}, [snapshot.cells, playerIndexMap, myPlayerIdx]);
+
+	// ── Victory detection ───────────────────────────────────────────────────
+	const isPuzzleComplete = React.useMemo(() =>
+		snapshot.cells.length === 81 &&
+		snapshot.cells.every((c, i) => c.value !== 0 && c.value.toString() === snapshot.solution[i]),
+		[snapshot.cells, snapshot.solution]
+	);
+
+	type GamePhase = 'playing' | 'complete';
+	const [gamePhase, setGamePhase] = React.useState<GamePhase>('playing');
+	const [victoryConfetti, setVictoryConfetti] = React.useState<VictoryParticle[]>([]);
+	const victoryFiredRef = React.useRef(false);
+
+	React.useEffect(() => {
+		if (isPuzzleComplete && !victoryFiredRef.current) {
+			victoryFiredRef.current = true;
+			setTimeout(() => {
+				playVictorySound();
+				setVictoryConfetti(makeVictoryConfetti());
+				setGamePhase('complete');
+			}, 600); // small delay to let last cell animation play
+		}
+		if (!isPuzzleComplete) {
+			victoryFiredRef.current = false;
+		}
+	}, [isPuzzleComplete]);
 
 	// Broadcast my hovered cell to other players
 	React.useEffect(() => {
@@ -602,6 +704,26 @@ export function StarterApp() {
 
 	const roomCode = new URLSearchParams(window.location.search).get("id") ?? "";
 
+	const elapsedMs = snapshot.gameStartedAt ? Date.now() - snapshot.gameStartedAt : 0;
+	const elapsedSecs = Math.floor(elapsedMs / 1000);
+	const elapsedDisplay = elapsedMs > 0
+		? `${Math.floor(elapsedSecs / 60)}:${String(elapsedSecs % 60).padStart(2, '0')}`
+		: '—';
+
+	const sortedPlayers = [...snapshot.players].sort((a, b) => b.points - a.points);
+
+	const handleReplay = () => {
+		replaySudokuRoom(tree, snapshot.difficulty, snapshot.gameMode);
+		setGamePhase('playing');
+		setVictoryConfetti([]);
+		victoryFiredRef.current = false;
+		prevCellValuesRef.current = [];
+	};
+
+	const handleGoHome = () => {
+		window.location.href = window.location.origin + window.location.pathname;
+	};
+
 	return (
 		<div
 			className="min-h-screen"
@@ -611,6 +733,134 @@ export function StarterApp() {
 				color: P.text,
 			}}
 		>
+			{/* Victory overlay */}
+			{gamePhase === 'complete' && (
+				<div
+					className="fixed inset-0 flex flex-col items-center justify-center z-50"
+					style={{
+						background: 'rgba(245,240,232,0.92)',
+						backdropFilter: 'blur(28px) saturate(1.5)',
+					}}
+				>
+					{/* Full-screen confetti rain */}
+					{victoryConfetti.map((p) => (
+						<span
+							key={p.id}
+							className="victory-confetti"
+							style={{
+								left: `${p.left}vw`,
+								width: p.width,
+								height: p.height,
+								borderRadius: p.radius,
+								background: p.color,
+								border: p.borderColor ? `1.5px solid ${p.borderColor}` : undefined,
+								animationDuration: `${p.duration}ms`,
+								animationDelay: `${p.delay}ms`,
+								['--drift' as string]: `${p.drift}px`,
+								['--spin' as string]: `${p.spin}deg`,
+							}}
+						/>
+					))}
+
+					{/* Victory card */}
+					<div
+						className="relative z-10 flex flex-col items-center gap-6 rounded-3xl px-12 py-10 text-center"
+						style={{
+							background: 'rgba(255,252,247,0.80)',
+							backdropFilter: 'blur(20px)',
+							border: '1px solid rgba(220,210,195,0.5)',
+							boxShadow: '0 24px 80px rgba(0,0,0,0.10)',
+							maxWidth: 440,
+							width: '90vw',
+						}}
+					>
+						<div className="text-5xl">🎉</div>
+						<div>
+							<h1
+								className="text-3xl font-bold tracking-tight mb-1"
+								style={{ color: P.text, letterSpacing: '-0.03em' }}
+							>
+								Congratulations!
+							</h1>
+							<p className="text-[14px]" style={{ color: P.text3 }}>
+								Puzzle solved
+								{snapshot.gameStartedAt ? ` in ${elapsedDisplay}` : ''}
+							</p>
+						</div>
+
+						{/* Scoreboard */}
+						{sortedPlayers.length > 0 && (
+							<div className="w-full">
+								<div
+									className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2 text-left"
+									style={{ color: P.text3 }}
+								>
+									Final Score
+								</div>
+								<ul className="space-y-1 w-full">
+									{sortedPlayers.map((player, rank) => {
+										const origIdx = snapshot.players.findIndex((p) => p.id === player.id);
+										const color = pc(origIdx >= 0 ? origIdx : rank);
+										const isMe = player.id === me.id;
+										return (
+											<li
+												key={player.id}
+												className="flex items-center justify-between rounded-2xl px-3.5 py-2.5"
+												style={{
+													background: rank === 0 ? 'rgba(240,179,64,0.10)' : 'rgba(0,0,0,0.03)',
+													border: rank === 0 ? '1px solid rgba(240,179,64,0.22)' : '1px solid transparent',
+												}}
+											>
+												<div className="flex items-center gap-2.5">
+													<span className="text-[13px] w-4 text-center" style={{ color: P.text3 }}>
+														{rank === 0 ? '🥇' : rank === 1 ? '🥈' : rank === 2 ? '🥉' : `${rank + 1}`}
+													</span>
+													<span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+													<span className="text-[13px] font-medium" style={{ color: P.text }}>
+														{player.name}
+														{isMe && <span className="ml-1 text-[11px] font-normal" style={{ color: P.text3 }}>you</span>}
+													</span>
+												</div>
+												<span className="text-[13px] font-semibold tabular-nums" style={{ color }}>
+													{player.points >= 0 ? '+' : ''}{player.points}
+												</span>
+											</li>
+										);
+									})}
+								</ul>
+							</div>
+						)}
+
+						{/* Buttons */}
+						<div className="flex gap-3 w-full">
+							<button
+								type="button"
+								onClick={handleGoHome}
+								className="flex-1 rounded-2xl px-4 py-2.5 text-[13px] font-semibold transition-all duration-150"
+								style={{
+									background: 'transparent',
+									border: `1.5px solid ${P.accentBorder}`,
+									color: P.text2,
+								}}
+							>
+								Go Home
+							</button>
+							<button
+								type="button"
+								onClick={handleReplay}
+								className="flex-1 rounded-2xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-150"
+								style={{
+									background: `linear-gradient(135deg, ${P.accent}, #a08665)`,
+									boxShadow: `0 2px 12px rgba(139,115,85,0.3)`,
+								}}
+							>
+								Play Again ↻
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			<div className="mx-auto max-w-5xl px-5 pt-6 pb-20 flex flex-col gap-5">
 
 				{/* Header */}
