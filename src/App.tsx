@@ -1080,7 +1080,7 @@ export function StarterApp() {
 							</div>
 
 							{/* Number reference bar */}
-							<div className="mt-3 flex justify-between gap-1">
+							<div className="mt-4 flex justify-between px-1">
 								{[1,2,3,4,5,6,7,8,9].map((n) => {
 									const count = snapshot.cells.filter((c) => c.value === n).length;
 									const done = count >= 9;
@@ -1098,27 +1098,29 @@ export function StarterApp() {
 													setSelectedCellIndex(null);
 												}
 											}}
-											className="flex-1 flex flex-col items-center rounded-xl py-1.5 transition-all duration-150"
+											className="flex flex-col items-center gap-0.5 transition-all duration-150"
 											style={{
-												background: active ? P.accentSoft : "transparent",
-												border: active ? `1px solid ${P.accentBorder}` : "1px solid transparent",
-												opacity: done ? 0.28 : 1,
+												background: "none",
+												border: "none",
+												padding: "4px 6px",
+												opacity: done ? 0.25 : 1,
 												cursor: done ? "default" : "pointer",
 											}}
 											disabled={done}
 										>
 											<span
-												className="text-[15px] tabular-nums"
+												className="text-[17px] tabular-nums leading-none"
 												style={{
-													color: active ? P.accent : "#9e8f7c",
-													fontWeight: active ? 700 : 500,
+													color: active ? P.text : P.text3,
+													fontWeight: active ? 700 : 400,
+													letterSpacing: "-0.02em",
 												}}
 											>
 												{n}
 											</span>
 											<span
-												className="text-[8px] tabular-nums mt-0.5"
-												style={{ color: P.text3 }}
+												className="text-[8px] tabular-nums leading-none"
+												style={{ color: active ? P.text3 : "rgba(0,0,0,0.18)" }}
 											>
 												{9 - count}
 											</span>
