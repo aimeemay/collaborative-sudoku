@@ -2,7 +2,11 @@
 
 The first ever collaborative Sudoku. Play with friends — solve together, pick up points (and friends) along the way. ✨
 
-Built with Fluid Framework + React + Tailwind. Real-time presence, cell locking, and shared game state so everyone plays on the same board at the same time.
+## 💡 About
+
+Collaborative Sudoku is a real-time multiplayer puzzle game built on [Microsoft Fluid Framework](https://fluidframework.com/) — the same technology that powers live co-editing in Microsoft 365. Every cell tap, number entry, and player move is instantly synced across everyone in the room, with no refresh and no lag.
+
+Under the hood it uses Fluid's shared data structures to keep the board in perfect sync, React for the UI, and Tailwind for styling. Real-time presence shows who's playing, cell locking prevents collisions, and the shared game state means everyone is always looking at the same puzzle.
 
 ## 🎮 How To Play
 
