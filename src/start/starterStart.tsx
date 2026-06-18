@@ -14,6 +14,7 @@ import { FluidProvider } from "../react/contexts/FluidContext.js";
 import { StarterApp } from "../App.js";
 import type { SudokuDifficulty } from "../utils/sudokuGenerator.js";
 import { adjectives, animals, colors, uniqueNamesGenerator } from "unique-names-generator";
+import { getLeaderboard, formatElapsed, type LeaderboardEntry } from "../utils/leaderboard.js";
 
 const P = {
 	bgFrom:    "#f5f0e8",
@@ -111,20 +112,41 @@ function StarterBootstrap() {
 		if (id) void launchRoom(id, false);
 	}, [launchRoom]);
 
+	const [allEntries] = React.useState<LeaderboardEntry[]>(() => getLeaderboard());
+	const [diffTab, setDiffTab] = React.useState<"easy" | "medium" | "hard">("easy");
+	const leaderboard = allEntries.filter(e => e.difficulty === diffTab).slice(0, 10);
+
 	if (runtime) return runtime;
 
 	const joinId = extractContainerId(joinInput);
 
+	const MEDAL = ["🥇", "🥈", "🥉"];
+	const MEDAL_BG = [
+		"rgba(240,179,64,0.10)",   // gold
+		"rgba(180,180,180,0.10)",  // silver
+		"rgba(184,128,80,0.10)",   // bronze
+	];
+	const MEDAL_BORDER = [
+		"rgba(240,179,64,0.25)",
+		"rgba(180,180,180,0.22)",
+		"rgba(184,128,80,0.22)",
+	];
+	const MEDAL_TIME_COLOR = ["#c89a28", "#888", "#a0714a"];
+
 	return (
 		<div
-			className="min-h-screen flex flex-col items-center px-4 py-12"
 			style={{
 				background: `linear-gradient(135deg, ${P.bgFrom} 0%, ${P.bgVia} 50%, ${P.bgTo} 100%)`,
 				fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif",
+				height: "100vh",
+				overflowY: "scroll",
+				scrollSnapType: "y mandatory",
 			}}
 		>
-			<div className="flex-1 flex items-center justify-center w-full">
-			<div className="w-full max-w-[360px] flex flex-col gap-5">
+			{/* ── Hero page ────────────────────────────────────────────── */}
+			<div className="relative flex flex-col items-center px-4 py-12 overflow-hidden" style={{ height: "100vh", scrollSnapAlign: "start" }}>
+				<div className="flex-1 flex items-center justify-center w-full">
+				<div className="w-full max-w-[360px] flex flex-col gap-5">
 
 				{/* Brand */}
 				<div className="text-center">
@@ -319,9 +341,105 @@ function StarterBootstrap() {
 			</div>
 			</div>
 
-			<p className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none" style={{ color: P.text3 }}>
+			{/* Scroll-down hint — pinned to bottom of hero viewport */}
+			<div className="absolute bottom-6 left-6 flex flex-col items-start gap-1 animate-bounce pointer-events-none" style={{ color: P.text3 }}>
+				<span className="text-[11px] font-medium tracking-wide">Leaderboard</span>
+				<span className="text-[14px]">↓</span>
+			</div>
+
+			{/* Hero page footer */}
+			<p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none pointer-events-none" style={{ color: P.text3 }}>
 				created by aimee leong
 			</p>
 		</div>
+
+		{/* ── Leaderboard page ─────────────────────────────────────── */}
+		<div className="relative flex flex-col items-center px-4 pt-16 pb-10 overflow-y-auto" style={{ height: "100vh", scrollSnapAlign: "start" }}>
+
+			{/* Back nudge — top left */}
+			<div className="absolute top-6 left-6 flex flex-col items-start gap-1 animate-bounce pointer-events-none" style={{ color: P.text3 }}>
+				<span className="text-[14px]">↑</span>
+				<span className="text-[11px] font-medium tracking-wide">Play Sudoku</span>
+			</div>
+
+			<div className="w-full max-w-[440px] flex-1">
+				<div className="text-center mb-8">
+					<h2 className="text-xl font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
+						All-Time Best
+					</h2>
+				</div>
+
+				{/* Difficulty tabs — floating text style */}
+				<div className="flex justify-center gap-6 mb-6">
+					{(["easy", "medium", "hard"] as const).map(d => (
+						<button
+							key={d}
+							onClick={() => setDiffTab(d)}
+							className="text-[13px] font-medium transition-all duration-150 bg-transparent border-none p-0"
+							style={{
+								color: diffTab === d ? P.text : P.text3,
+								fontWeight: diffTab === d ? 600 : 400,
+								borderBottom: diffTab === d ? `1.5px solid ${P.text}` : "1.5px solid transparent",
+								paddingBottom: "2px",
+							}}
+						>
+							{d.charAt(0).toUpperCase() + d.slice(1)}
+						</button>
+					))}
+				</div>
+
+				{leaderboard.length === 0 ? (
+					<div className="text-center py-16" style={{ color: P.text3 }}>
+						<p className="text-[32px] mb-3">🏆</p>
+						<p className="text-[14px] font-medium">No {diffTab} games yet</p>
+						<p className="text-[12px] mt-1 opacity-70">Complete a puzzle to set the first record!</p>
+					</div>
+				) : (
+					<ol className="flex flex-col gap-3">
+						{leaderboard.map((entry, i) => {
+							const isMedal = i < 3;
+							return (
+								<li
+									key={entry.id}
+									className="rounded-2xl px-5 py-4"
+									style={{
+										background: isMedal ? MEDAL_BG[i] : "rgba(255,252,247,0.55)",
+										border: `1px solid ${isMedal ? MEDAL_BORDER[i] : P.glassBorder}`,
+										backdropFilter: "blur(16px)",
+									}}
+								>
+									<div className="flex items-center justify-between gap-3">
+										<div className="flex items-center gap-3 min-w-0">
+											<span className="text-[18px] shrink-0 w-7 text-center">
+												{isMedal ? MEDAL[i] : <span className="text-[13px]" style={{ color: P.text3 }}>{i + 1}</span>}
+											</span>
+											<div className="min-w-0">
+												<p className="text-[13px] font-medium truncate" style={{ color: P.text }}>
+													{entry.players.length > 0 ? entry.players.join(" · ") : "Anonymous"}
+												</p>
+												<p className="text-[11px] mt-0.5" style={{ color: P.text3 }}>
+													{new Date(entry.completedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+												</p>
+											</div>
+										</div>
+										<span
+											className="text-[18px] font-bold tabular-nums shrink-0"
+											style={{ color: isMedal ? MEDAL_TIME_COLOR[i] : P.accent, letterSpacing: "-0.02em" }}
+										>
+											{formatElapsed(entry.elapsedMs)}
+										</span>
+									</div>
+								</li>
+							);
+						})}
+					</ol>
+				)}
+			</div>
+
+			<p className="mt-10 text-[11px] font-medium select-none pointer-events-none" style={{ color: P.text3 }}>
+				created by aimee leong
+			</p>
+		</div>
+		</div>
 	);
-}
+	}
