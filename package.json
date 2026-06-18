@@ -59,6 +59,7 @@
 		"@types/react-dom": "^18.3.7",
 		"@typescript-eslint/eslint-plugin": "^8.19.1",
 		"@typescript-eslint/parser": "^8.19.1",
+		"@vercel/node": "^5.8.17",
 		"concurrently": "^10.0.3",
 		"cross-env": "^7.0.3",
 		"eruda": "^3.4.3",

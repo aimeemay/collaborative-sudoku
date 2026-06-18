@@ -14,7 +14,7 @@ import { FluidProvider } from "../react/contexts/FluidContext.js";
 import { StarterApp } from "../App.js";
 import type { SudokuDifficulty } from "../utils/sudokuGenerator.js";
 import { adjectives, animals, colors, uniqueNamesGenerator } from "unique-names-generator";
-import { getLeaderboard, formatElapsed, type LeaderboardEntry } from "../utils/leaderboard.js";
+import { fetchLeaderboard, formatElapsed, type LeaderboardEntry } from "../utils/leaderboard.js";
 
 const P = {
 	bgFrom:    "#f5f0e8",
@@ -140,9 +140,17 @@ function StarterBootstrap() {
 		if (id) void launchRoom(id, false);
 	}, [launchRoom]);
 
-	const [allEntries] = React.useState<LeaderboardEntry[]>(() => getLeaderboard());
 	const [diffTab, setDiffTab] = React.useState<"easy" | "medium" | "hard">("easy");
-	const leaderboard = allEntries.filter(e => e.difficulty === diffTab).slice(0, 10);
+	const [leaderboard, setLeaderboard] = React.useState<LeaderboardEntry[]>([]);
+	React.useEffect(() => {
+		let active = true;
+		void fetchLeaderboard(diffTab, 10).then((rows) => {
+			if (active) setLeaderboard(rows);
+		});
+		return () => {
+			active = false;
+		};
+	}, [diffTab]);
 
 	if (runtime) return runtime;
 

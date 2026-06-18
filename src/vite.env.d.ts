@@ -9,6 +9,7 @@ interface ImportMetaEnv {
 	readonly VITE_OPENAI_API_KEY?: string;
 	readonly VITE_AUTHORITY?: string;
 	readonly VITE_FLUID_CLIENT?: string;
+	readonly VITE_TINYLICIOUS_ENDPOINT?: string;
 	readonly VITE_AZURE_CLIENT_ID?: string;
 	readonly VITE_AZURE_REDIRECT_URI?: string;
 	readonly VITE_AZURE_TENANT_ID?: string;

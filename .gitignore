@@ -104,3 +104,4 @@ local.settings.json
 
 # Nix
 shell.nix
+.vercel
