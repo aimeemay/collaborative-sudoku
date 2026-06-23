@@ -4,6 +4,7 @@ import { AzureClient } from "@fluidframework/azure-client";
 import { AttachState } from "fluid-framework";
 import { getClientProps } from "../infra/azure/azureClientProps.js";
 import {
+	getSudokuSnapshot,
 	initializeGeneratedSudokuRoom,
 	initializeRoomAdmin,
 	loadStarterContainer,
@@ -15,6 +16,7 @@ import { StarterApp } from "../App.js";
 import type { SudokuDifficulty } from "../utils/sudokuGenerator.js";
 import { adjectives, animals, colors, uniqueNamesGenerator } from "unique-names-generator";
 import { fetchLeaderboard, formatElapsed, type LeaderboardEntry } from "../utils/leaderboard.js";
+import { generateRoomCode, isRoomCode, parseJoinInput, resolveJoinTarget, resolveRoomCode } from "../utils/rooms.js";
 
 const P = {
 	bgFrom:    "#f5f0e8",
@@ -29,6 +31,73 @@ const P = {
 	accent:    "#8b7355",
 	accentSoft: "rgba(139,115,85,0.10)",
 } as const;
+
+// Mirrors PCOLORS in App.tsx so the lobby room-preview dots match in-room colors.
+const PREVIEW_COLORS = [
+	"#6b8cba", "#b87070", "#a8893a", "#5a9e85",
+	"#8a73b5", "#b87d5a", "#5a96a8", "#a86990",
+];
+
+// Apple-style segmented control: a single "thumb" slides between slots with a
+// smooth spring-like settle, instead of each slot independently fading its fill.
+function Segmented<T extends string>({
+	value,
+	options,
+	onChange,
+	ariaLabel,
+}: {
+	value: T;
+	options: { value: T; label: string }[];
+	onChange: (v: T) => void;
+	ariaLabel?: string;
+}) {
+	const n = options.length;
+	const idx = Math.max(0, options.findIndex((o) => o.value === value));
+	return (
+		<div
+			role="radiogroup"
+			aria-label={ariaLabel}
+			className="relative flex rounded-2xl p-1"
+			style={{
+				background: "rgba(0,0,0,0.04)",
+				border: "1px solid rgba(0,0,0,0.04)",
+			}}
+		>
+			<div
+				aria-hidden
+				className="absolute rounded-xl"
+				style={{
+					top: 4,
+					bottom: 4,
+					left: 4,
+					width: `calc((100% - 8px) / ${n})`,
+					transform: `translateX(${idx * 100}%)`,
+					background: "rgba(255,255,255,0.85)",
+					boxShadow:
+						"0 1px 4px rgba(0,0,0,0.06), 0 0.5px 0 rgba(255,255,255,0.8) inset",
+					transition: "transform 0.42s cubic-bezier(0.34, 1.32, 0.5, 1)",
+					willChange: "transform",
+				}}
+			/>
+			{options.map((o) => {
+				const active = value === o.value;
+				return (
+					<button
+						key={o.value}
+						type="button"
+						role="radio"
+						aria-checked={active}
+						onClick={() => onChange(o.value)}
+						className="relative z-10 flex-1 rounded-xl py-2 text-[13px] font-medium transition-colors duration-200"
+						style={{ color: active ? P.text : P.text3 }}
+					>
+						{o.label}
+					</button>
+				);
+			})}
+		</div>
+	);
+}
 
 function makeUser(): PresenceUser {
 	const KEY = "sudoku.me";
@@ -68,17 +137,6 @@ export async function startStarter() {
 	);
 }
 
-function extractContainerId(input: string): string {
-	const trimmed = input.trim();
-	if (!trimmed) return "";
-	try {
-		const url = new URL(trimmed);
-		return url.searchParams.get("id") ?? "";
-	} catch {
-		return trimmed;
-	}
-}
-
 function StarterBootstrap() {
 	const [runtime, setRuntime] = React.useState<React.ReactNode | null>(null);
 	const [busy, setBusy] = React.useState(false);
@@ -86,6 +144,16 @@ function StarterBootstrap() {
 	const [joinInput, setJoinInput] = React.useState("");
 	const [difficulty, setDifficulty] = React.useState<SudokuDifficulty>("easy");
 	const [gameMode, setGameMode] = React.useState<"classic" | "cosudoku">("cosudoku");
+
+	// Live preview of who's already in a room, shown as the user types/pastes a
+	// join code so they get feedback before committing to join.
+	type RoomPreview = {
+		players: { id: string; name: string; online: boolean }[];
+		gameMode: "classic" | "cosudoku";
+		difficulty: SudokuDifficulty;
+	};
+	const [preview, setPreview] = React.useState<RoomPreview | null>(null);
+	const [previewState, setPreviewState] = React.useState<"idle" | "loading" | "empty" | "error">("idle");
 
 	const meRef = React.useRef<PresenceUser | null>(null);
 	if (!meRef.current) meRef.current = makeUser();
@@ -99,7 +167,7 @@ function StarterBootstrap() {
 	);
 
 	const launchRoom = React.useCallback(
-		async (containerId: string, makeAdmin: boolean, diff: SudokuDifficulty = "easy", mode: "classic" | "cosudoku" = "classic") => {
+		async (containerId: string, makeAdmin: boolean, diff: SudokuDifficulty = "easy", mode: "classic" | "cosudoku" = "classic", knownCode?: string) => {
 			setBusy(true);
 			setError(null);
 			try {
@@ -114,8 +182,24 @@ function StarterBootstrap() {
 					resolvedId = await container.attach();
 				}
 
+				// New rooms get a short 4-digit code; joiners reuse the code they
+				// came in with. We keep the container id in the URL too, so a shared
+				// link is self-contained and joins instantly on any device even if the
+				// code lookup is unavailable. The short ?room= code is what we display
+				// and what people can type by hand.
+				let code = knownCode;
+				if (makeAdmin) {
+					try {
+						code = await generateRoomCode(resolvedId);
+					} catch {
+						code = undefined;
+					}
+				}
+
 				const next = new URL(window.location.href);
 				next.searchParams.set("id", resolvedId);
+				if (code) next.searchParams.set("room", code);
+				else next.searchParams.delete("room");
 				window.history.replaceState({}, "", next.toString());
 
 				const presence = createPresenceClients(container, me);
@@ -136,8 +220,20 @@ function StarterBootstrap() {
 	);
 
 	React.useEffect(() => {
-		const id = new URLSearchParams(window.location.search).get("id") ?? "";
-		if (id) void launchRoom(id, false);
+		const params = new URLSearchParams(window.location.search);
+		const id = params.get("id") ?? "";
+		const room = params.get("room") ?? "";
+		if (id) {
+			// Self-contained link — join the container directly, no lookup needed.
+			void launchRoom(id, false, "easy", "classic", isRoomCode(room) ? room : undefined);
+		} else if (room) {
+			// Code-only link — translate the code to a container id via the lookup.
+			void (async () => {
+				const containerId = await resolveRoomCode(room);
+				if (containerId) void launchRoom(containerId, false, "easy", "classic", room);
+				else setError("That room code wasn’t found.");
+			})();
+		}
 	}, [launchRoom]);
 
 	const [diffTab, setDiffTab] = React.useState<"easy" | "medium" | "hard">("easy");
@@ -152,9 +248,82 @@ function StarterBootstrap() {
 		};
 	}, [diffTab]);
 
+	// Debounced room peek: load the container read-only, read its registered
+	// players + audience (online set), then dispose. Guarded against races so a
+	// stale load can't overwrite a newer query.
+	React.useEffect(() => {
+		const target = parseJoinInput(joinInput);
+		if (target.kind === "none") {
+			setPreview(null);
+			setPreviewState("idle");
+			return;
+		}
+		let cancelled = false;
+		let dispose: (() => void) | null = null;
+		setPreviewState("loading");
+		const timer = setTimeout(() => {
+			void (async () => {
+				try {
+					const resolved = await resolveJoinTarget(target);
+					if (cancelled) return;
+					if (!resolved) {
+						setPreview(null);
+						setPreviewState("error");
+						return;
+					}
+					const { container, tree, audience } = await loadStarterContainer({ client, containerId: resolved.containerId });
+					dispose = () => container.dispose();
+					if (cancelled) { container.dispose(); return; }
+
+					// A freshly loaded container reflects the last summary; recent ops
+					// (e.g. a player registering) may still be inbound. Wait for the
+					// connection, then briefly poll so we don't falsely report "empty".
+					if (container.connectionState !== 2 /* Connected */) {
+						await new Promise<void>((resolve) => {
+							const onConnected = () => { container.off("connected", onConnected); resolve(); };
+							container.on("connected", onConnected);
+							setTimeout(() => { container.off("connected", onConnected); resolve(); }, 4000);
+						});
+					}
+					if (cancelled) { container.dispose(); return; }
+
+					const read = () => {
+						const snap = getSudokuSnapshot(tree);
+						const members = audience.getMembers();
+						return {
+							players: snap.players.map((p) => ({ id: p.id, name: p.name, online: members.has(p.id) })),
+							gameMode: snap.gameMode,
+							difficulty: snap.difficulty,
+						};
+					};
+					let result = read();
+					for (let i = 0; i < 6 && result.players.length === 0; i++) {
+						await new Promise((r) => setTimeout(r, 250));
+						if (cancelled) { container.dispose(); return; }
+						result = read();
+					}
+					if (cancelled) { container.dispose(); return; }
+					setPreview(result);
+					setPreviewState(result.players.length === 0 ? "empty" : "idle");
+				} catch {
+					if (!cancelled) {
+						setPreview(null);
+						setPreviewState("error");
+					}
+				}
+			})();
+		}, 550);
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+			if (dispose) dispose();
+		};
+	}, [joinInput, client]);
+
 	if (runtime) return runtime;
 
-	const joinId = extractContainerId(joinInput);
+	const joinTarget = parseJoinInput(joinInput);
+	const canJoin = joinTarget.kind !== "none";
 
 	const MEDAL = ["🥇", "🥈", "🥉"];
 	const MEDAL_BG = [
@@ -180,23 +349,23 @@ function StarterBootstrap() {
 			}}
 		>
 			{/* ── Hero page ────────────────────────────────────────────── */}
-			<div className="relative flex flex-col items-center px-4 py-12 overflow-hidden" style={{ height: "100vh", scrollSnapAlign: "start" }}>
-				<div className="flex-1 flex items-center justify-center w-full">
-				<div className="w-full max-w-[360px] flex flex-col gap-5">
+			<div className="relative flex flex-col items-center overflow-hidden" style={{ height: "100vh", scrollSnapAlign: "start" }}>
+				<div className="flex-1 w-full overflow-y-auto flex flex-col px-5 pt-8 pb-4">
+				<div className="w-full max-w-[360px] mx-auto my-auto flex flex-col gap-4">
 
 				{/* Brand */}
 				<div className="text-center">
-					<h1 className="text-xl font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
-						Collaborative Sudoku
+					<h1 className="text-2xl font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
+						Co-Sudoku
 					</h1>
-					<p className="mt-1 text-[13px]" style={{ color: P.text3 }}>
+					<p className="mt-1.5 text-[13px]" style={{ color: P.text3 }}>
 						sudoku, but make it a group activity ✦ play with friends
 					</p>
 				</div>
 
 				{/* Create */}
 				<div
-					className="rounded-3xl p-6 flex flex-col gap-4"
+					className="rounded-3xl p-5 flex flex-col gap-4"
 					style={{
 						background: P.glassBold,
 						backdropFilter: "blur(32px) saturate(1.5)",
@@ -205,14 +374,9 @@ function StarterBootstrap() {
 						boxShadow: "0 4px 24px rgba(80,60,30,0.06), 0 0.5px 0 rgba(255,255,255,0.6) inset",
 					}}
 				>
-					<div>
-						<p className="text-sm font-semibold" style={{ color: P.text }}>
-							Create a room
-						</p>
-						<p className="mt-0.5 text-[12px]" style={{ color: P.text3 }}>
-							Share the link — others can jump in.
-						</p>
-					</div>
+					<p className="text-[15px] font-semibold tracking-tight" style={{ color: P.text }}>
+						Create a room
+					</p>
 
 					<div className="flex flex-col gap-1.5">
 						<label
@@ -221,31 +385,16 @@ function StarterBootstrap() {
 						>
 							Difficulty
 						</label>
-						<div
-							className="flex rounded-2xl p-1"
-							style={{
-								background: "rgba(0,0,0,0.04)",
-								border: "1px solid rgba(0,0,0,0.04)",
-							}}
-						>
-							{(["easy", "medium", "hard"] as const).map((d) => (
-								<button
-									key={d}
-									type="button"
-									onClick={() => setDifficulty(d)}
-									className="flex-1 rounded-xl py-2 text-[13px] font-medium transition-all duration-200"
-									style={{
-										background: difficulty === d ? "rgba(255,255,255,0.85)" : "transparent",
-										color: difficulty === d ? P.text : P.text3,
-										boxShadow: difficulty === d
-											? "0 1px 4px rgba(0,0,0,0.06), 0 0.5px 0 rgba(255,255,255,0.8) inset"
-											: "none",
-									}}
-								>
-									{d.charAt(0).toUpperCase() + d.slice(1)}
-								</button>
-							))}
-						</div>
+						<Segmented
+							ariaLabel="Difficulty"
+							value={difficulty}
+							onChange={setDifficulty}
+							options={[
+								{ value: "easy", label: "Easy" },
+								{ value: "medium", label: "Medium" },
+								{ value: "hard", label: "Hard" },
+							]}
+						/>
 					</div>
 
 					<div className="flex flex-col gap-1.5">
@@ -255,31 +404,15 @@ function StarterBootstrap() {
 						>
 							Mode
 						</label>
-						<div
-							className="flex rounded-2xl p-1"
-							style={{
-								background: "rgba(0,0,0,0.04)",
-								border: "1px solid rgba(0,0,0,0.04)",
-							}}
-						>
-							{([["cosudoku", "Classic"], ["classic", "Turn-Based"]] as const).map(([m, label]) => (
-								<button
-									key={m}
-									type="button"
-									onClick={() => setGameMode(m)}
-									className="flex-1 rounded-xl py-2 text-[13px] font-medium transition-all duration-200"
-									style={{
-										background: gameMode === m ? "rgba(255,255,255,0.85)" : "transparent",
-										color: gameMode === m ? P.text : P.text3,
-										boxShadow: gameMode === m
-											? "0 1px 4px rgba(0,0,0,0.06), 0 0.5px 0 rgba(255,255,255,0.8) inset"
-											: "none",
-									}}
-								>
-									{label}
-								</button>
-							))}
-						</div>
+						<Segmented
+							ariaLabel="Mode"
+							value={gameMode}
+							onChange={setGameMode}
+							options={[
+								{ value: "cosudoku", label: "Classic" },
+								{ value: "classic", label: "Turn-Based" },
+							]}
+						/>
 						{gameMode === "cosudoku" && (
 							<p className="text-[11px] mt-0.5" style={{ color: P.text3 }}>
 								All players solve puzzle collaboratively, live.
@@ -315,7 +448,7 @@ function StarterBootstrap() {
 
 				{/* Join */}
 				<div
-					className="rounded-3xl p-6 flex flex-col gap-4"
+					className="rounded-3xl p-5 flex flex-col gap-4"
 					style={{
 						background: P.glass,
 						backdropFilter: "blur(24px) saturate(1.4)",
@@ -324,49 +457,134 @@ function StarterBootstrap() {
 						boxShadow: "0 2px 16px rgba(80,60,30,0.04), 0 0.5px 0 rgba(255,255,255,0.5) inset",
 					}}
 				>
-					<div>
-						<p className="text-sm font-semibold" style={{ color: P.text }}>
-							Join a room
-						</p>
-						<p className="mt-0.5 text-[12px]" style={{ color: P.text3 }}>
-							Paste a room code or link from a friend.
-						</p>
-					</div>
+					<p className="text-[15px] font-semibold tracking-tight" style={{ color: P.text }}>
+						Join a room
+					</p>
 
-					<input
-						value={joinInput}
-						onChange={(e) => setJoinInput(e.target.value)}
-						placeholder="Room code or URL"
-						className="w-full rounded-2xl px-4 py-3 text-sm outline-none transition-all duration-200"
-						style={{
-							background: "rgba(255,255,255,0.6)",
-							border: "1.5px solid rgba(0,0,0,0.06)",
-							color: P.text,
-							boxShadow: "0 1px 4px rgba(0,0,0,0.03) inset",
+					<form
+						onSubmit={(e) => {
+							e.preventDefault();
+							if (busy || !canJoin) return;
+							void (async () => {
+								const resolved = await resolveJoinTarget(joinTarget);
+								if (!resolved) {
+									setError("That room code wasn’t found.");
+									return;
+								}
+								await launchRoom(resolved.containerId, false, "easy", "classic", resolved.code);
+							})();
 						}}
-						onFocus={(e) => {
-							e.currentTarget.style.borderColor = P.accent;
-							e.currentTarget.style.boxShadow = `0 0 0 3px ${P.accentSoft}`;
-						}}
-						onBlur={(e) => {
-							e.currentTarget.style.borderColor = "rgba(0,0,0,0.06)";
-							e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.03) inset";
-						}}
-					/>
+						className="relative"
+					>
+						<input
+							value={joinInput}
+							onChange={(e) => setJoinInput(e.target.value)}
+							placeholder="Room code or URL"
+							enterKeyHint="go"
+							inputMode="text"
+							className="w-full rounded-2xl pl-4 pr-14 py-3 text-sm outline-none transition-all duration-200"
+							style={{
+								background: "rgba(255,255,255,0.6)",
+								border: "1.5px solid rgba(0,0,0,0.06)",
+								color: P.text,
+								boxShadow: "0 1px 4px rgba(0,0,0,0.03) inset",
+							}}
+							onFocus={(e) => {
+								e.currentTarget.style.borderColor = P.accent;
+								e.currentTarget.style.boxShadow = `0 0 0 3px ${P.accentSoft}`;
+							}}
+							onBlur={(e) => {
+								e.currentTarget.style.borderColor = "rgba(0,0,0,0.06)";
+								e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.03) inset";
+							}}
+						/>
+						<button
+							type="submit"
+							disabled={busy || !canJoin}
+							aria-label={busy ? "Joining" : "Join room"}
+							className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center justify-center rounded-xl transition-all duration-200 disabled:opacity-0 disabled:pointer-events-none"
+							style={{
+								width: 38,
+								height: 38,
+								background: P.accent,
+								color: "#fff",
+								boxShadow: "0 2px 8px rgba(120,90,40,0.25)",
+							}}
+						>
+							{busy ? (
+								<span className="text-base leading-none">…</span>
+							) : (
+								<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+									<line x1="5" y1="12" x2="19" y2="12" />
+									<polyline points="12 5 19 12 12 19" />
+								</svg>
+							)}
+						</button>
+					</form>
 
-					<button
-						type="button"
-						disabled={busy || joinId.length === 0}
-						onClick={() => void launchRoom(joinId, false)}
-						className="w-full rounded-2xl py-3 text-sm font-semibold transition-all duration-200 disabled:opacity-35"
+					{/* Live room preview — auto-shows who's already in the room as you type */}
+					<div
+						className="overflow-hidden transition-all duration-300 ease-out"
 						style={{
-							background: "rgba(255,255,255,0.6)",
-							border: `1.5px solid ${P.glassBorder}`,
-							color: P.text2,
+							maxHeight: previewState === "idle" && preview && preview.players.length > 0 ? 200
+								: previewState === "loading" || previewState === "empty" || previewState === "error" ? 44
+								: 0,
+							opacity: previewState === "idle" && !(preview && preview.players.length > 0) ? 0 : 1,
 						}}
 					>
-						{busy ? "Joining…" : "Join Room"}
-					</button>
+						<div className="pt-3">
+							{previewState === "loading" && (
+								<div className="flex items-center gap-2 text-[12px]" style={{ color: P.text3 }}>
+									<span className="inline-block w-3 h-3 rounded-full border-2 animate-spin" style={{ borderColor: "rgba(0,0,0,0.12)", borderTopColor: P.accent }} />
+									<span>Looking for the room…</span>
+								</div>
+							)}
+							{previewState === "error" && (
+								<p className="text-[12px]" style={{ color: P.text3 }}>
+									No room found for that code yet.
+								</p>
+							)}
+							{previewState === "empty" && (
+								<p className="text-[12px]" style={{ color: P.text3 }}>
+									Room is open — you’ll be the first one in.
+								</p>
+							)}
+							{previewState === "idle" && preview && preview.players.length > 0 && (
+								<div>
+									<div className="flex items-center justify-between mb-2">
+										<span className="text-[10px] font-bold uppercase tracking-[0.12em]" style={{ color: P.text3 }}>
+											In this room
+										</span>
+										<span className="text-[10px] font-semibold uppercase tracking-[0.1em]" style={{ color: P.text3 }}>
+											{preview.gameMode === "cosudoku" ? "Classic" : "Turn-Based"} · {preview.difficulty}
+										</span>
+									</div>
+									<div className="flex flex-wrap gap-1.5">
+										{preview.players.map((p, i) => {
+											const color = PREVIEW_COLORS[i % PREVIEW_COLORS.length];
+											return (
+												<div
+													key={p.id}
+													className="flex items-center gap-1.5 rounded-full pl-1.5 pr-2.5 py-1"
+													style={{ background: "rgba(0,0,0,0.03)" }}
+												>
+													<span className="relative flex items-center justify-center w-2.5 h-2.5">
+														<span className="w-2 h-2 rounded-full" style={{ background: color, boxShadow: `0 0 6px ${color}40` }} />
+														{p.online && (
+															<span className="absolute -right-0.5 -bottom-0.5 w-1.5 h-1.5 rounded-full" style={{ background: "#5a9e85", border: "1.5px solid #f8f3eb" }} />
+														)}
+													</span>
+													<span className="text-[12px] leading-none whitespace-nowrap" style={{ color: P.text2, fontWeight: 500 }}>
+														{p.name}
+													</span>
+												</div>
+											);
+										})}
+									</div>
+								</div>
+							)}
+						</div>
+					</div>
 				</div>
 
 				{error && (
@@ -377,16 +595,17 @@ function StarterBootstrap() {
 			</div>
 			</div>
 
-			{/* Scroll-down hint — pinned to bottom of hero viewport */}
-			<div className="absolute bottom-6 left-6 flex flex-col items-start gap-1 animate-bounce pointer-events-none" style={{ color: P.text3 }}>
-				<span className="text-[11px] font-medium tracking-wide">Leaderboard</span>
-				<span className="text-[14px]">↓</span>
+			{/* Bottom chrome — a dedicated safe area in the layout flow so the
+			    scroll hint and credit can never overlap the content above. */}
+			<div className="relative w-full shrink-0 h-16">
+				<div className="absolute bottom-4 left-6 flex flex-col items-start gap-0.5 animate-bounce pointer-events-none" style={{ color: P.text3 }}>
+					<span className="text-[11px] font-medium tracking-wide">Leaderboard</span>
+					<span className="text-[14px] leading-none">↓</span>
+				</div>
+				<p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none pointer-events-none whitespace-nowrap" style={{ color: P.text3 }}>
+					created by aimee leong
+				</p>
 			</div>
-
-			{/* Hero page footer */}
-			<p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none pointer-events-none" style={{ color: P.text3 }}>
-				created by aimee leong
-			</p>
 		</div>
 
 		{/* ── Leaderboard page ─────────────────────────────────────── */}

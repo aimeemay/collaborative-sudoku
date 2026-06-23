@@ -402,6 +402,7 @@ export function StarterApp() {
 	const [selectedCellIndex, setSelectedCellIndex] = React.useState<number | null>(null);
 	const [pendingMove, setPendingMove] = React.useState<{ cellIndex: number; value: number } | null>(null);
 	const [copied, setCopied] = React.useState(false);
+	const [codeCopied, setCodeCopied] = React.useState(false);
 	const [highlightNumber, setHighlightNumber] = React.useState<number | null>(null);
 	const [highlightOrigin, setHighlightOrigin] = React.useState<number | null>(null);
 	const [wrongCell, setWrongCell] = React.useState<{ index: number; value: number } | null>(null);
@@ -482,6 +483,7 @@ export function StarterApp() {
 
 	type GamePhase = 'playing' | 'complete';
 	const [gamePhase, setGamePhase] = React.useState<GamePhase>('playing');
+	const [showLeaveConfirm, setShowLeaveConfirm] = React.useState(false);
 	const [victoryConfetti, setVictoryConfetti] = React.useState<VictoryParticle[]>([]);
 	const [completionElapsedMs, setCompletionElapsedMs] = React.useState<number | null>(null);
 	const victoryFiredRef = React.useRef(false);
@@ -679,6 +681,27 @@ export function StarterApp() {
 	isAdminRef.current = isAdmin;
 	const adminIdRef = React.useRef(snapshot.roomAdminId);
 	adminIdRef.current = snapshot.roomAdminId;
+	const gamePhaseRef = React.useRef(gamePhase);
+	gamePhaseRef.current = gamePhase;
+	// Set just before an intentional navigation so the beforeunload guard below
+	// doesn't double-prompt after the in-app confirmation.
+	const leavingRef = React.useRef(false);
+
+	// Warn the admin before they close/refresh the tab — leaving ends the game
+	// for everyone. Browsers show their own generic dialog; the returned string
+	// is the message we'd surface where custom text is honored.
+	React.useEffect(() => {
+		const onBeforeUnload = (e: BeforeUnloadEvent) => {
+			if (leavingRef.current) return;
+			if (!isAdminRef.current || gamePhaseRef.current === 'complete') return;
+			const msg = "Are you sure you want to leave this room? As admin, this will end the game for everyone.";
+			e.preventDefault();
+			e.returnValue = msg;
+			return msg;
+		};
+		window.addEventListener("beforeunload", onBeforeUnload);
+		return () => window.removeEventListener("beforeunload", onBeforeUnload);
+	}, []);
 	React.useEffect(() => {
 		if (!displayName) return;
 		const GRACE_MS = 5000;
@@ -820,9 +843,32 @@ export function StarterApp() {
 		setSelectedCellIndex(null);
 	};
 
+	// On-screen number entry — primary input on touch devices. Mirrors the
+	// keyboard handler above so phones can play without a physical keyboard.
+	const inputCell = selectedCellIndex === null ? undefined : snapshot.cells[selectedCellIndex];
+	const canInput =
+		(isCo || isMyTurn) &&
+		selectedCellIndex !== null &&
+		inputCell !== undefined &&
+		!inputCell.fixed &&
+		inputCell.value === 0 &&
+		!(isCo && inputCell.lockedBy && inputCell.lockedBy !== me.id);
+
+	const handleNumberInput = (n: number) => {
+		if (!canInput || selectedCellIndex === null) return;
+		setPendingMove({ cellIndex: selectedCellIndex, value: n });
+	};
+	const handleClearInput = () => {
+		if (selectedCellIndex === null) return;
+		setPendingMove(null);
+	};
+
 	// ── Render ─────────────────────────────────────────────────────────────
 
-	const roomCode = new URLSearchParams(window.location.search).get("id") ?? "";
+	const roomCode = (() => {
+		const params = new URLSearchParams(window.location.search);
+		return params.get("room") ?? params.get("id") ?? "";
+	})();
 
 	// Use frozen elapsed on victory screen so timer doesn't keep ticking
 	const liveElapsedMs = snapshot.gameStartedAt ? Date.now() - snapshot.gameStartedAt : 0;
@@ -842,8 +888,19 @@ export function StarterApp() {
 	};
 
 	const handleGoHome = () => {
+		leavingRef.current = true;
 		if (amInQueueRef.current) leaveSudokuRoom(tree, me.id);
 		window.location.href = window.location.origin + window.location.pathname;
+	};
+
+	// Clicking the header title always leaves the room and returns home. Admins
+	// get a confirmation first because leaving ends the game for everyone.
+	const handleTitleClick = () => {
+		if (isAdmin && gamePhase !== 'complete') {
+			setShowLeaveConfirm(true);
+		} else {
+			handleGoHome();
+		}
 	};
 
 	return (
@@ -984,6 +1041,63 @@ export function StarterApp() {
 			)}
 
 			{/* Host-left overlay — admin (room host) disappeared; everyone returns home */}
+			{/* Admin leave confirmation — leaving ends the game for everyone */}
+			{showLeaveConfirm && (
+				<div
+					className="fixed inset-0 flex flex-col items-center justify-center z-[60] px-6"
+					style={{
+						background: 'rgba(245,240,232,0.92)',
+						backdropFilter: 'blur(28px) saturate(1.5)',
+					}}
+				>
+					<div
+						className="relative z-10 flex flex-col items-center gap-5 rounded-3xl px-10 py-9 text-center"
+						style={{
+							background: 'rgba(255,252,247,0.80)',
+							backdropFilter: 'blur(20px)',
+							border: '1px solid rgba(220,210,195,0.5)',
+							boxShadow: '0 24px 80px rgba(0,0,0,0.10)',
+							maxWidth: 420,
+							width: '90vw',
+						}}
+					>
+						<div className="text-5xl">⚠️</div>
+						<div>
+							<h1
+								className="text-xl font-bold tracking-tight mb-1.5"
+								style={{ color: P.text, letterSpacing: '-0.03em' }}
+							>
+								Leave this room?
+							</h1>
+							<p className="text-[14px] leading-relaxed" style={{ color: P.text3 }}>
+								As admin, leaving will end the game for everyone.
+							</p>
+						</div>
+						<div className="flex flex-col gap-2.5 w-full">
+							<button
+								type="button"
+								onClick={handleGoHome}
+								className="w-full rounded-2xl px-4 py-2.5 text-[13px] font-semibold text-white transition-all duration-150 hover:opacity-90"
+								style={{
+									background: `linear-gradient(135deg, ${P.accent}, #a08665)`,
+									boxShadow: `0 2px 12px rgba(139,115,85,0.3)`,
+								}}
+							>
+								Leave &amp; end game
+							</button>
+							<button
+								type="button"
+								onClick={() => setShowLeaveConfirm(false)}
+								className="w-full rounded-2xl px-4 py-2.5 text-[13px] font-medium transition-all duration-150 hover:opacity-80"
+								style={{ ...glassCard, color: P.text2 }}
+							>
+								Stay
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+
 			{adminLeft && gamePhase !== 'complete' && (
 				<div
 					className="fixed inset-0 flex flex-col items-center justify-center z-50 px-6"
@@ -1032,7 +1146,7 @@ export function StarterApp() {
 
 			{/* Header bar — fixed to top, full-width */}
 				<header
-					className="sticky top-0 z-30 flex items-center justify-between gap-4 px-6 py-3.5"
+					className="sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3.5"
 					style={{
 						background: 'rgba(245,240,232,0.88)',
 						backdropFilter: 'blur(20px) saturate(1.4)',
@@ -1040,21 +1154,40 @@ export function StarterApp() {
 					}}
 				>
 					<div>
-						<h1 className="text-[15px] font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
-							{isCo ? "Classic Co-Sudoku" : "Collaborative Sudoku"}
-						</h1>
+						<button
+							type="button"
+							onClick={handleTitleClick}
+							className="text-left bg-transparent border-none p-0 cursor-pointer transition-opacity duration-150 hover:opacity-70"
+							title="Leave room and return home"
+						>
+							<h1 className="text-[15px] font-bold tracking-tight" style={{ color: P.text, letterSpacing: "-0.02em" }}>
+								Co-Sudoku
+							</h1>
+						</button>
 						<p className="mt-0.5 text-[11px] font-medium" style={{ color: P.text3 }}>
-							{snapshot.difficulty.toUpperCase()} · {snapshot.players.length > 0 ? snapshot.players.length : new Set(users.map((u) => u.value.id)).size + 1} online
+							{isCo ? "CLASSIC" : "TURN-BASED"} · {snapshot.difficulty.toUpperCase()} · {snapshot.players.length > 0 ? snapshot.players.length : new Set(users.map((u) => u.value.id)).size + 1} online
 						</p>
 					</div>
 					<div className="flex items-center gap-2 shrink-0">
 						{roomCode && (
-							<span
-								className="rounded-xl px-3 py-1.5 text-[11px] font-mono tracking-wide select-all"
-								style={{ ...glassCard, color: P.text2 }}
+							<button
+								type="button"
+								onClick={() => {
+									void navigator.clipboard.writeText(roomCode);
+									setCodeCopied(true);
+									setTimeout(() => setCodeCopied(false), 2000);
+								}}
+								title="Copy room code"
+								aria-label="Copy room code"
+								className="rounded-xl px-3 py-1.5 text-[11px] font-mono tracking-wide transition-all duration-200 hover:opacity-80 cursor-pointer"
+								style={{ ...glassCard, color: codeCopied ? P.accent : P.text2 }}
 							>
-								{roomCode.slice(0, 8)}…
-							</span>
+								{codeCopied
+									? "Copied!"
+									: /^\d{4}$/.test(roomCode)
+										? `#${roomCode}`
+										: `${roomCode.slice(0, 8)}…`}
+							</button>
 						)}
 						{!amInQueue && (
 							<button
@@ -1083,14 +1216,60 @@ export function StarterApp() {
 					</div>
 				</header>
 
-				<div className="mx-auto w-full max-w-5xl px-5 pt-5 pb-10">
+				<div className="mx-auto w-full max-w-5xl px-4 sm:px-5 pt-5 pb-10">
 
 					{/* Main layout: board + sidebar */}
-					<div className="flex gap-5 items-start">
+					<div className="flex flex-col lg:flex-row gap-5 items-start">
 
 					{/* Board column */}
-					<form onSubmit={handleSubmit} className="flex-1 min-w-0">
+					<form onSubmit={handleSubmit} className="w-full lg:flex-1 min-w-0">
 						<div className="mx-auto" style={{ maxWidth: "clamp(360px, calc(100vh - 180px), 580px)" }}>
+
+							{/* Mobile presence strip — who's online + whose turn (scoreboard lives at bottom on mobile) */}
+							{snapshot.players.length > 0 && (
+								<div
+									className="lg:hidden flex items-center gap-1.5 overflow-x-auto mb-3 pb-0.5"
+									style={{ scrollbarWidth: "none" }}
+								>
+									{snapshot.players.map((player, index) => {
+										const color = pc(index);
+										const isActive = !isCo && player.id === snapshot.currentTurnPlayerId;
+										const isMe = player.id === me.id;
+										return (
+											<div
+												key={player.id}
+												className="flex items-center gap-1.5 rounded-full px-2.5 py-1 shrink-0 transition-colors duration-200"
+												style={{
+													background: isActive ? P.accentSoft : "rgba(0,0,0,0.03)",
+													border: `1px solid ${isActive ? "rgba(139,115,85,0.25)" : "transparent"}`,
+												}}
+											>
+												<span
+													className="w-2 h-2 rounded-full shrink-0"
+													style={{ background: color, boxShadow: `0 0 6px ${color}40` }}
+												/>
+												<span
+													className="text-[12px] leading-none whitespace-nowrap"
+													style={{
+														color: isActive ? P.accent : isCo ? color : P.text2,
+														fontWeight: isMe ? 600 : isActive ? 600 : 500,
+													}}
+												>
+													{player.name}{isMe ? " (you)" : ""}
+												</span>
+												{isActive && turnTimeLeft !== null && (
+													<span
+														className="text-[10px] font-semibold tabular-nums leading-none"
+														style={{ color: turnTimeLeft <= 10 ? "#d97706" : P.accent }}
+													>
+														{turnTimeLeft}s
+													</span>
+												)}
+											</div>
+										);
+									})}
+								</div>
+							)}
 
 							{/* Grid + number column side by side */}
 							<div className="flex items-stretch gap-3">
@@ -1226,8 +1405,8 @@ export function StarterApp() {
 								</div>{/* close glassBoldCard */}
 								</div>{/* close flex-1 grid */}
 
-								{/* Number reference column — right of grid */}
-								<div className="flex flex-col justify-around py-0.5 shrink-0">
+								{/* Number reference column — right of grid (desktop only) */}
+								<div className="hidden lg:flex flex-col justify-around py-0.5 shrink-0">
 									{[1,2,3,4,5,6,7,8,9].map((n) => {
 										const count = snapshot.cells.filter((c) => c.value === n).length;
 										const done = count >= 9;
@@ -1278,12 +1457,57 @@ export function StarterApp() {
 
 					</div>{/* close flex row */}
 
+					{/* On-screen number pad — always shown on mobile (primary input);
+					    on desktop it appears once an editable cell is selected. */}
+					<div className={`mt-4 toolbar-slide-in lg:pr-10${canInput ? "" : " lg:hidden"}`}>
+							<div className="grid grid-cols-9 gap-1.5">
+								{[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => {
+									const numDone = snapshot.cells.filter((c) => c.value === n).length >= 9;
+									const isPending = pendingMove?.cellIndex === selectedCellIndex && pendingMove?.value === n;
+									// Turn-based: numbers stay disabled until an editable cell is
+									// selected (on your turn). They also stay disabled once the
+									// number is fully placed on the board.
+									const numDisabled = numDone || (!isCo && !canInput);
+									return (
+										<button
+											key={n}
+											type="button"
+											aria-label={`Enter ${n}`}
+											onClick={() => handleNumberInput(n)}
+											disabled={numDisabled}
+											className="flex items-center justify-center rounded-xl text-[18px] font-semibold tabular-nums transition-all duration-150 disabled:opacity-25"
+											style={{
+												minHeight: 48,
+												touchAction: "manipulation",
+												background: isPending ? (isCo ? myColor : P.accent) : glassCard.background,
+												backdropFilter: glassCard.backdropFilter,
+												WebkitBackdropFilter: glassCard.WebkitBackdropFilter,
+												border: glassCard.border,
+												color: isPending ? "#fff" : isCo ? myColor : P.accent,
+											}}
+										>
+											{n}
+										</button>
+									);
+								})}
+							</div>
+							<button
+								type="button"
+								onClick={handleClearInput}
+								disabled={pendingMove === null}
+								className="mt-1.5 w-full flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-[13px] font-medium transition-all duration-150 disabled:opacity-25"
+								style={{ ...glassCard, color: P.text2, touchAction: "manipulation" }}
+							>
+								⌫ Erase
+							</button>
+					</div>
+
 					{/* Action buttons */}
-					<div className="mt-4 flex items-center gap-2.5 justify-end pr-10">
+					<div className="mt-4 flex items-center gap-2.5 justify-end lg:pr-10">
 							<button
 								type="submit"
 								disabled={!canSubmit}
-								className="rounded-2xl px-5 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 disabled:opacity-30"
+								className="flex-1 lg:flex-none min-h-[3rem] lg:min-h-0 rounded-2xl px-5 py-2.5 text-[13px] font-semibold text-white transition-all duration-200 disabled:opacity-30"
 								style={{
 									background: isCo
 										? `linear-gradient(135deg, ${myColor}, ${myColor}cc)`
@@ -1299,7 +1523,7 @@ export function StarterApp() {
 									type="button"
 									disabled={!isMyTurn}
 									onClick={handlePass}
-									className="rounded-2xl px-4 py-2.5 text-[13px] font-medium transition-all duration-200 disabled:opacity-30"
+									className="min-h-[3rem] lg:min-h-0 rounded-2xl px-5 py-2.5 text-[13px] font-medium transition-all duration-200 disabled:opacity-30"
 									style={glassCard}
 								>
 									Pass
@@ -1310,12 +1534,16 @@ export function StarterApp() {
 					</div>{/* close max-w wrapper */}
 				</form>
 
+				{/* Subtle divider between gameplay and reference panel — mobile only,
+				    where the two columns stack vertically. */}
+				<div className="lg:hidden h-px w-full" style={{ background: P.glassBorder }} />
+
 				{/* Right column: sidebar + admin tools stacked */}
-				<div className="flex flex-col gap-6 shrink-0">
+				<div className="flex flex-col gap-6 w-full lg:w-auto shrink-0">
 
 					{/* ── Unified sidebar ──────────── */}
 					<aside
-						className="rounded-3xl p-6 flex flex-col gap-5 w-[260px]"
+						className="rounded-3xl p-6 flex flex-col gap-5 w-full lg:w-[260px]"
 						style={glassBoldCard}
 					>
 						{/* Turn / mode indicator */}
@@ -1397,7 +1625,7 @@ export function StarterApp() {
 							{snapshot.players.length === 0 ? (
 								<p className="text-[12px]" style={{ color: P.text3 }}>No players yet.</p>
 							) : (
-								<ul className="space-y-1 pl-4">
+								<ul className={`space-y-1${isCo ? "" : " pl-4"}`}>
 									{snapshot.players.map((player, index) => {
 										const color = pc(index);
 										const isActive = !isCo && player.id === snapshot.currentTurnPlayerId;
@@ -1492,7 +1720,7 @@ export function StarterApp() {
 					{/* Admin Tools — tile below sidebar */}
 					{!isCo && isAdmin && (
 						<div
-							className="rounded-2xl px-4 py-3 w-[260px]"
+							className="rounded-2xl px-4 py-3 w-full lg:w-[260px]"
 							style={{ background: "rgba(0,0,0,0.03)", border: `1px solid rgba(0,0,0,0.05)` }}
 						>
 							<p className="text-[10px] font-bold uppercase tracking-[0.12em] mb-2" style={{ color: P.text3 }}>
@@ -1518,7 +1746,7 @@ export function StarterApp() {
 			</div>
 
 			<div
-				className="pointer-events-none fixed bottom-4 left-1/2 -translate-x-1/2 text-[11px] font-medium select-none"
+				className="pointer-events-none select-none text-[11px] font-medium text-center py-4 lg:py-0 lg:fixed lg:bottom-4 lg:left-1/2 lg:-translate-x-1/2"
 				style={{ color: P.text3 }}
 			>
 				created by aimee leong

@@ -20,7 +20,7 @@ export async function waitForStarterApp(page: Page): Promise<void> {
 		await joinButton.click();
 	}
 
-	await expect(page.getByRole("heading", { name: "Collaborative Sudoku" })).toBeVisible({
+	await expect(page.getByRole("heading", { name: "Co-Sudoku" })).toBeVisible({
 		timeout: 15000,
 	});
 	await expect(page.getByRole("button", { name: "Submit move" })).toBeVisible();
@@ -39,7 +39,7 @@ export async function openSameSessionInNewPage(page: Page, otherPage: Page): Pro
 		await joinButton.click();
 	}
 
-	await expect(otherPage.getByRole("heading", { name: "Collaborative Sudoku" })).toBeVisible({
+	await expect(otherPage.getByRole("heading", { name: "Co-Sudoku" })).toBeVisible({
 		timeout: 15000,
 	});
 }

@@ -12,7 +12,7 @@ test.describe("Smoke Tests", () => {
 	});
 
 	test("should load the collaborative Sudoku UI", async ({ page }) => {
-		await expect(page.getByRole("heading", { name: "Collaborative Sudoku" })).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Co-Sudoku" })).toBeVisible();
 		await expect(page.getByRole("heading", { name: "Scoreboard" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Submit move" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Pass" })).toBeVisible();
